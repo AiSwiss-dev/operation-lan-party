@@ -1,0 +1,16 @@
+# Lokale Konfiguration (wird beim Deployment aus GitHub-Variablen erzeugt)
+js/config.js
+
+# System / Editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log
+node_modules/
+
+# Tests
+tests/node_modules/
+tests/screenshots/
+tests/package-lock.json

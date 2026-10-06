@@ -1,0 +1,933 @@
+-- =====================================================================
+--  OPERATION LAN-PARTY // CS2 EINSATZPRÜFUNG
+--  Supabase / PostgreSQL – komplettes Datenbankschema
+-- =====================================================================
+--
+--  AUSFÜHREN
+--    Supabase Dashboard → SQL Editor → "New query" → gesamten Inhalt
+--    dieser Datei einfügen → "Run".
+--
+--  DANACH (einmalig, eigene Abfrage im SQL Editor):
+--    select public.set_commander_password('DEIN-GEHEIMES-PASSWORT');
+--
+--  MEHRFACH AUSFÜHRBAR
+--    Das Script ist idempotent: Es legt nur an, was fehlt, ersetzt die
+--    Funktionen durch die aktuelle Version und aktualisiert die Fragen.
+--    Es löscht KEINE Spieldaten.
+--    Einzige DROP-Befehle: "DROP POLICY IF EXISTS" (die Policies werden
+--    direkt danach identisch neu angelegt).
+--
+--  SICHERHEITSMODELL (Kurzfassung, Details im README)
+--    * Der Browser kennt nur den öffentlichen anon/publishable Key.
+--    * Direkt lesbar (für Realtime) sind nur die Tabellen "games" und
+--      "players" – und zwar NUR lesend.
+--    * Alle Schreibzugriffe laufen über die RPC-Funktionen weiter unten
+--      (SECURITY DEFINER). Sie prüfen Spielstatus, Deadline, Spieler-Token
+--      bzw. Host-Session und berechnen Punkte ausschließlich serverseitig.
+--    * Fragen inkl. richtiger Antwort, Antworten, Tokens, Host-Sessions
+--      und das Commander-Passwort sind für den Browser nicht lesbar.
+-- =====================================================================
+
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
+
+
+-- =====================================================================
+-- 1. TABELLEN
+-- =====================================================================
+
+-- Spielregeln (eine Zeile). Neue Missionen übernehmen diese Werte.
+-- Ändern z. B.:  update public.game_rules set question_duration_s = 30;
+create table if not exists public.game_rules (
+  id                  int primary key default 1 check (id = 1),
+  question_duration_s int not null default 20  check (question_duration_s between 5 and 120),
+  base_points         int not null default 100 check (base_points between 0 and 10000),
+  bonus_per_second    int not null default 5   check (bonus_per_second between 0 and 1000),
+  lead_in_ms          int not null default 3000 check (lead_in_ms between 0 and 10000),
+  grace_ms            int not null default 750  check (grace_ms between 0 and 5000),
+  max_players         int not null default 64   check (max_players between 1 and 500)
+);
+insert into public.game_rules (id) values (1) on conflict (id) do nothing;
+
+-- Commander-Passwort (bcrypt-Hash, eine Zeile)
+create table if not exists public.commander_config (
+  id            int primary key default 1 check (id = 1),
+  password_hash text not null,
+  updated_at    timestamptz not null default now()
+);
+
+-- Host-Sessions (nur der SHA-256-Hash des Tokens wird gespeichert)
+create table if not exists public.host_sessions (
+  token_hash text primary key,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+-- Login-Versuche (Brute-Force-Bremse)
+create table if not exists public.login_attempts (
+  id           bigint generated always as identity primary key,
+  attempted_at timestamptz not null default now(),
+  success      boolean not null
+);
+create index if not exists login_attempts_time_idx on public.login_attempts (attempted_at);
+
+-- Missionen / Spielsessions
+create table if not exists public.games (
+  id                  uuid primary key default gen_random_uuid(),
+  code                text not null unique check (code ~ '^[1-9][0-9]{5}$'),
+  status              text not null default 'lobby'
+                      check (status in ('lobby','question','results','phase_break','finished','aborted')),
+  current_question    int  not null default 0 check (current_question >= 0),
+  phase               int  not null default 1 check (phase in (1, 2)),
+  question_started_at timestamptz,
+  question_ends_at    timestamptz,
+  state_version       bigint not null default 1,
+  duration_s          int not null check (duration_s between 5 and 120),
+  base_points         int not null,
+  bonus_per_second    int not null,
+  lead_in_ms          int not null,
+  grace_ms            int not null,
+  max_players         int not null,
+  created_by          text,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+create index if not exists games_created_at_idx on public.games (created_at desc);
+
+-- Spieler (Operatoren)
+create table if not exists public.players (
+  id                  uuid primary key default gen_random_uuid(),
+  game_id             uuid not null references public.games (id) on delete cascade,
+  callsign            text not null check (char_length(callsign) between 2 and 24),
+  callsign_normalized text not null,
+  score               int  not null default 0,
+  correct_time_ms     bigint not null default 0,   -- Tie-Breaker: Summe der Antwortzeiten richtiger Antworten
+  answered_question   int  not null default 0,
+  joined_at           timestamptz not null default now(),
+  last_seen           timestamptz not null default now(),
+  constraint players_unique_callsign unique (game_id, callsign_normalized)
+);
+create index if not exists players_game_idx on public.players (game_id);
+-- für Installationen einer früheren Version dieses Scripts
+alter table public.players add column if not exists correct_time_ms bigint not null default 0;
+
+-- Geheime Spieler-Tokens (getrennt, damit die öffentliche players-Tabelle
+-- keinerlei Geheimnisse enthält)
+create table if not exists public.player_tokens (
+  player_id  uuid primary key references public.players (id) on delete cascade,
+  token_hash text not null unique
+);
+
+-- Fragen inkl. Antwortschlüssel – für den Browser NICHT lesbar
+create table if not exists public.questions (
+  question_index int primary key check (question_index between 1 and 200),
+  phase          int  not null check (phase in (1, 2)),
+  question_text  text not null,
+  option_a       text not null,
+  option_b       text not null,
+  option_c       text not null,
+  option_d       text not null,
+  correct_option char(1) not null check (correct_option in ('A','B','C','D'))
+);
+
+-- Abgegebene Antworten – für den Browser NICHT lesbar
+create table if not exists public.answers (
+  id               uuid primary key default gen_random_uuid(),
+  game_id          uuid not null references public.games (id) on delete cascade,
+  player_id        uuid not null references public.players (id) on delete cascade,
+  question_index   int  not null,
+  selected_option  char(1) not null check (selected_option in ('A','B','C','D')),
+  is_correct       boolean not null,
+  response_time_ms int not null check (response_time_ms >= 0),
+  points           int not null check (points >= 0),
+  created_at       timestamptz not null default now(),
+  constraint answers_one_per_question unique (player_id, game_id, question_index)
+);
+create index if not exists answers_game_q_idx on public.answers (game_id, question_index);
+
+
+-- =====================================================================
+-- 2. FRAGEN (werden bei jedem Ausführen aktualisiert)
+--    Spalten: Nummer, Phase, Frage, A, B, C, D, richtige Option
+-- =====================================================================
+
+insert into public.questions
+  (question_index, phase, question_text, option_a, option_b, option_c, option_d, correct_option)
+values
+  -- PHASE I – REKRUTENPRÜFUNG
+  (1, 1, 'Welche Waffe ist exklusiv für die Terroristen-Seite kaufbar?',
+      'M4A1-S', 'AK-47', 'FAMAS', 'AUG', 'B'),
+  (2, 1, 'Wie hoch ist das reguläre maximale Guthaben eines Spielers?',
+      '10.000 $', '12.000 $', '16.000 $', '20.000 $', 'C'),
+  (3, 1, 'Welche Ausrüstung beschleunigt das Entschärfen des C4?',
+      'Defuse Kit', 'Tactical Shield', 'Zeus x27', 'Rescue Kit', 'A'),
+  (4, 1, 'Welche Granate verursacht direkten Explosionsschaden?',
+      'Smoke Grenade', 'Flashbang', 'Decoy Grenade', 'HE Grenade', 'D'),
+  (5, 1, 'Welche ikonische Wüstenmap besitzt Bombsite A und B?',
+      'Nuke', 'Vertigo', 'Dust II', 'Office', 'C'),
+  (6, 1, 'Welche Utility erzeugt eine Rauchwand?',
+      'Molotov', 'Smoke Grenade', 'Flashbang', 'Decoy', 'B'),
+  (7, 1, 'Welche Waffe ist für extrem hohen Einzelschussschaden und Scope bekannt?',
+      'P90', 'AWP', 'Nova', 'MAC-10', 'B'),
+  (8, 1, 'Was passiert typischerweise mit der Genauigkeit vieler Waffen beim Laufen?',
+      'Sie steigt', 'Sie nimmt ab', 'Sie bleibt identisch', 'Rückstoß verschwindet', 'B'),
+  (9, 1, 'Wie können CTs nach einem erfolgreichen Bomb-Plant noch gewinnen?',
+      'Durch rechtzeitiges Entschärfen', 'Durch Waffen-Drop', 'Durch Spawn-Wechsel', 'Gar nicht mehr', 'A'),
+  (10, 1, 'Kann ein CT die AK-47 regulär direkt in seinem Kaufmenü kaufen?',
+      'Ja', 'Nein', 'Nur mit Defuse Kit', 'Nur in Overtime', 'B'),
+  -- PHASE II – VETERANENPRÜFUNG
+  (11, 2, 'Welche Waffenkategorie bietet bei vielen Waffen hohe Kill-Belohnungen?',
+      'Sniper', 'Maschinenpistolen', 'Rifles', 'Schwere Pistolen', 'B'),
+  (12, 2, 'Wie heißt auf Dust II der lange Zugang über Long Doors zur A-Site?',
+      'Long A', 'Connector', 'Ramp B', 'Short B', 'A'),
+  (13, 2, 'Welche Utility kann einen CS2-Smoke durch ihre Explosion vorübergehend aufreißen?',
+      'Flashbang', 'Decoy', 'HE Grenade', 'Molotov', 'C'),
+  (14, 2, 'Wie lange dauert ein Defuse MIT Kit?',
+      '3 Sekunden', '5 Sekunden', '7 Sekunden', '10 Sekunden', 'B'),
+  (15, 2, 'Was ist das Hauptziel eines taktischen „Save“?',
+      'Ausrüstung für die nächste Runde retten', 'Uhr beschleunigen', 'Bombe automatisch entschärfen', 'Spawn wählen', 'A'),
+  (16, 2, 'Was können Schüsse mit einem volumetrischen CS2-Smoke machen?',
+      'Kurzzeitig kleine Sichtöffnungen erzeugen', 'Ihn permanent löschen', 'Ihn einfrieren', 'Nichts', 'A'),
+  (17, 2, 'Was bedeutet „Wallbang“?',
+      'Granate abprallen lassen', 'Durch eine durchdringbare Oberfläche schießen', 'Wand mit Messer treffen', 'Smoke an die Wand werfen', 'B'),
+  (18, 2, 'Was beschreibt „Default spielen“ am ehesten?',
+      'Kontrolliert verteilen, Informationen und Map-Kontrolle sammeln', 'Sofort als Fünfer-Rush angreifen', 'Nur Pistolen kaufen', 'Bombe im Spawn lassen', 'A'),
+  (19, 2, 'Kann eine HE-Explosion einen Smoke vorübergehend verdrängen?',
+      'Wahr', 'Falsch', 'Nur auf Dust II', 'Nur als CT', 'A'),
+  (20, 2, 'Wie lange dauert ein Defuse OHNE Kit?',
+      '5 Sekunden', '7 Sekunden', '10 Sekunden', '12 Sekunden', 'C')
+on conflict (question_index) do update set
+  phase          = excluded.phase,
+  question_text  = excluded.question_text,
+  option_a       = excluded.option_a,
+  option_b       = excluded.option_b,
+  option_c       = excluded.option_c,
+  option_d       = excluded.option_d,
+  correct_option = excluded.correct_option;
+
+
+-- =====================================================================
+-- 3. INTERNE HILFSFUNKTIONEN (für den Browser NICHT aufrufbar)
+-- =====================================================================
+
+create or replace function public._sha256(p text)
+returns text language sql immutable set search_path = ''
+as $$ select encode(sha256(convert_to(coalesce(p, ''), 'UTF8')), 'hex') $$;
+
+-- 244 Bit Zufall aus zwei kryptografisch erzeugten UUIDs
+create or replace function public._new_token()
+returns text language sql volatile set search_path = ''
+as $$ select replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '') $$;
+
+create or replace function public._ms(p timestamptz)
+returns bigint language sql immutable set search_path = ''
+as $$ select case when p is null then null else floor(extract(epoch from p) * 1000)::bigint end $$;
+
+-- Callsign säubern: Unicode normalisieren, Leerraum zusammenfassen, trimmen
+create or replace function public._clean_callsign(p text)
+returns text language sql stable set search_path = ''
+as $$
+  select btrim(regexp_replace(normalize(coalesce(p, ''), NFC),
+               '[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+', ' ', 'g'))
+$$;
+
+-- Host-Token prüfen
+create or replace function public._require_host(p_token text)
+returns void language plpgsql stable set search_path = ''
+as $$
+begin
+  if p_token is null or not exists (
+       select 1 from public.host_sessions
+        where token_hash = public._sha256(p_token) and expires_at > now()) then
+    raise exception 'HOST_UNAUTHORIZED';
+  end if;
+end $$;
+
+-- Spieler-Token prüfen, liefert den Spieler
+create or replace function public._player_auth(p_player_id uuid, p_token text)
+returns public.players language plpgsql stable set search_path = ''
+as $$
+declare v public.players;
+begin
+  select p.* into v
+    from public.players p
+    join public.player_tokens t on t.player_id = p.id
+   where p.id = p_player_id and t.token_hash = public._sha256(p_token);
+  if not found then
+    raise exception 'PLAYER_NOT_FOUND';
+  end if;
+  return v;
+end $$;
+
+-- Höchstpunktzahl einer Mission. Eine Antwort kommt immer NACH dem Start
+-- an, deshalb bleiben höchstens (Dauer − 1) volle Sekunden übrig.
+create or replace function public._max_score(g public.games)
+returns int language sql stable set search_path = ''
+as $$
+  select (select count(*)::int from public.questions)
+         * (g.base_points + greatest(g.duration_s - 1, 0) * g.bonus_per_second)
+$$;
+
+-- Öffentliche Spielinfos als JSON (Zeiten als Epoch-Millisekunden)
+create or replace function public._game_json(g public.games)
+returns jsonb language sql stable set search_path = ''
+as $$
+  select jsonb_build_object(
+    'id',               g.id,
+    'code',             g.code,
+    'status',           g.status,
+    'current_question', g.current_question,
+    'phase',            g.phase,
+    'state_version',    g.state_version,
+    'total_questions',  (select count(*) from public.questions),
+    'phase_first',      (select min(question_index) from public.questions where phase = g.phase),
+    'phase_last',       (select max(question_index) from public.questions where phase = g.phase),
+    'duration_s',       g.duration_s,
+    'base_points',      g.base_points,
+    'bonus_per_second', g.bonus_per_second,
+    'grace_ms',         g.grace_ms,
+    'max_score',        public._max_score(g),
+    'started_at_ms',    public._ms(g.question_started_at),
+    'ends_at_ms',       public._ms(g.question_ends_at),
+    'server_now_ms',    public._ms(clock_timestamp())
+  )
+$$;
+
+-- Frage OHNE Lösung als JSON
+create or replace function public._question_json(p_index int)
+returns jsonb language sql stable set search_path = ''
+as $$
+  select jsonb_build_object(
+    'index',   q.question_index,
+    'phase',   q.phase,
+    'text',    q.question_text,
+    'options', jsonb_build_object('A', q.option_a, 'B', q.option_b, 'C', q.option_c, 'D', q.option_d))
+  from public.questions q where q.question_index = p_index
+$$;
+
+-- Frage starten (mit kurzem "GET READY"-Vorlauf, damit alle Geräte
+-- die Frage gleichzeitig freischalten)
+create or replace function public._start_question(p_game_id uuid, p_index int)
+returns void language plpgsql set search_path = ''
+as $$
+declare v_start timestamptz;
+begin
+  select clock_timestamp() + make_interval(secs => g.lead_in_ms / 1000.0)
+    into v_start from public.games g where g.id = p_game_id;
+  update public.games g
+     set status              = 'question',
+         current_question    = p_index,
+         phase               = (select q.phase from public.questions q where q.question_index = p_index),
+         question_started_at = v_start,
+         question_ends_at    = v_start + make_interval(secs => g.duration_s),
+         state_version       = g.state_version + 1,
+         updated_at          = now()
+   where g.id = p_game_id;
+end $$;
+
+-- Was ist der nächste logische Host-Schritt?
+create or replace function public._next_action(g public.games)
+returns text language plpgsql stable set search_path = ''
+as $$
+declare v_next int; v_next_phase int;
+begin
+  if g.status = 'lobby' then return 'start'; end if;
+  if g.status = 'question' then return 'reveal'; end if;
+  if g.status = 'phase_break' then return 'start_phase'; end if;
+  if g.status = 'results' then
+    select question_index, phase into v_next, v_next_phase
+      from public.questions where question_index > g.current_question
+     order by question_index limit 1;
+    if v_next is null then return 'final'; end if;
+    if v_next_phase <> g.phase then return 'phase_break'; end if;
+    return 'next';
+  end if;
+  return 'none';
+end $$;
+
+-- Kompletter Host-Zustand
+create or replace function public._host_state(p_game_id uuid)
+returns jsonb language plpgsql stable set search_path = ''
+as $$
+declare
+  g public.games;
+  v_players jsonb;
+  v_count int;
+  v_answers int;
+  v_reveal boolean;
+  v_dist jsonb;
+  v_correct text;
+begin
+  select * into g from public.games where id = p_game_id;
+  if not found then raise exception 'MISSION_NOT_FOUND'; end if;
+
+  select count(*) into v_count from public.players where game_id = g.id;
+  select count(*) into v_answers from public.answers
+   where game_id = g.id and question_index = g.current_question;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'id', p.id, 'callsign', p.callsign, 'score', p.score, 'time_ms', p.correct_time_ms,
+           'answered', (p.answered_question = g.current_question and g.current_question > 0),
+           'joined_at_ms', public._ms(p.joined_at))
+           order by p.score desc, p.correct_time_ms, p.joined_at), '[]'::jsonb)
+    into v_players from public.players p where p.game_id = g.id;
+
+  v_reveal := g.status in ('results', 'phase_break', 'finished');
+  if v_reveal and g.current_question > 0 then
+    select correct_option into v_correct from public.questions where question_index = g.current_question;
+    select jsonb_build_object(
+             'A', count(*) filter (where selected_option = 'A'),
+             'B', count(*) filter (where selected_option = 'B'),
+             'C', count(*) filter (where selected_option = 'C'),
+             'D', count(*) filter (where selected_option = 'D'))
+      into v_dist from public.answers
+     where game_id = g.id and question_index = g.current_question;
+  end if;
+
+  return jsonb_build_object(
+    'game',           public._game_json(g),
+    'players',        v_players,
+    'player_count',   v_count,
+    'answers_count',  v_answers,
+    'all_answered',   (v_count > 0 and v_answers >= v_count),
+    'question',       case when g.current_question > 0 then public._question_json(g.current_question) end,
+    'correct_option', v_correct,
+    'distribution',   v_dist,
+    'next_action',    public._next_action(g)
+  );
+end $$;
+
+
+-- =====================================================================
+-- 4. ÖFFENTLICHE RPC-FUNKTIONEN – SPIELER
+-- =====================================================================
+
+-- Serverzeit für die Uhr-Synchronisation (Epoch-Millisekunden).
+-- Bewusst ohne interne Hilfsfunktion: läuft mit den Rechten des Aufrufers (anon).
+create or replace function public.server_time()
+returns bigint language sql volatile set search_path = ''
+as $$ select floor(extract(epoch from clock_timestamp()) * 1000)::bigint $$;
+
+-- Mission beitreten
+create or replace function public.join_game(p_code text, p_callsign text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_game     public.games;
+  v_code     text := btrim(coalesce(p_code, ''));
+  v_callsign text := public._clean_callsign(p_callsign);
+  v_norm     text;
+  v_count    int;
+  v_id       uuid;
+  v_token    text := public._new_token();
+begin
+  if v_code !~ '^[0-9]{6}$' then raise exception 'MISSION_CODE_INVALID'; end if;
+
+  -- FOR SHARE: ein gleichzeitiges "Mission starten" wartet, bis der Beitritt fertig ist
+  select * into v_game from public.games where code = v_code for share;
+  if not found then raise exception 'MISSION_NOT_FOUND'; end if;
+  if v_game.status in ('finished', 'aborted') then raise exception 'MISSION_CLOSED'; end if;
+  if v_game.status <> 'lobby' then raise exception 'MISSION_ALREADY_STARTED'; end if;
+
+  if char_length(v_callsign) < 2 or char_length(v_callsign) > 24 then
+    raise exception 'CALLSIGN_LENGTH';
+  end if;
+  -- Steuerzeichen, unsichtbare Zeichen und spitze Klammern sind nicht erlaubt
+  if v_callsign ~ '[\u0001-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF<>]' then
+    raise exception 'CALLSIGN_CHARS';
+  end if;
+  v_norm := lower(normalize(v_callsign, NFKC));
+
+  select count(*) into v_count from public.players where game_id = v_game.id;
+  if v_count >= v_game.max_players then raise exception 'MISSION_FULL'; end if;
+
+  begin
+    insert into public.players (game_id, callsign, callsign_normalized)
+    values (v_game.id, v_callsign, v_norm)
+    returning id into v_id;
+  exception when unique_violation then
+    raise exception 'CALLSIGN_TAKEN';
+  end;
+
+  insert into public.player_tokens (player_id, token_hash) values (v_id, public._sha256(v_token));
+
+  return jsonb_build_object(
+    'player_id', v_id, 'player_token', v_token,
+    'game_id', v_game.id, 'code', v_game.code, 'callsign', v_callsign);
+end $$;
+
+-- Kompletter Zustand aus Sicht eines Spielers (für Start, Reload, Realtime)
+create or replace function public.get_player_state(p_player_id uuid, p_token text, p_touch boolean default false)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  me       public.players;
+  g        public.games;
+  a        public.answers;
+  v_reveal boolean;
+  v_answer jsonb;
+  v_correct text;
+begin
+  me := public._player_auth(p_player_id, p_token);
+  if p_touch then
+    update public.players set last_seen = now() where id = me.id;
+  end if;
+  select * into g from public.games where id = me.game_id;
+
+  v_reveal := g.status in ('results', 'phase_break', 'finished');
+
+  if g.current_question > 0 then
+    select * into a from public.answers
+     where game_id = g.id and player_id = me.id and question_index = g.current_question;
+    if a.id is not null then
+      v_answer := jsonb_build_object('question_index', a.question_index, 'selected_option', a.selected_option);
+      if v_reveal then
+        v_answer := v_answer || jsonb_build_object('is_correct', a.is_correct, 'points', a.points);
+      end if;
+    end if;
+    if v_reveal then
+      select correct_option into v_correct from public.questions where question_index = g.current_question;
+    end if;
+  end if;
+
+  return jsonb_build_object(
+    'game', public._game_json(g),
+    'me', jsonb_build_object(
+      'player_id', me.id,
+      'callsign',  me.callsign,
+      'score',     me.score,
+      'position',  (select count(*) + 1 from public.players
+                     where game_id = g.id
+                       and (score > me.score or (score = me.score and correct_time_ms < me.correct_time_ms)))),
+    'players', (select coalesce(jsonb_agg(jsonb_build_object(
+                  'callsign', p.callsign, 'score', p.score, 'time_ms', p.correct_time_ms, 'is_me', p.id = me.id,
+                  'answered', (p.answered_question = g.current_question and g.current_question > 0))
+                  order by p.score desc, p.correct_time_ms, p.joined_at), '[]'::jsonb)
+                from public.players p where p.game_id = g.id),
+    'question', case when g.current_question > 0 and g.status in ('question', 'results')
+                     then public._question_json(g.current_question) end,
+    'answer', v_answer,
+    'correct_option', v_correct
+  );
+end $$;
+
+-- Antwort abgeben. Der Client sendet NUR Spieler, Token, Frage und Option.
+-- Richtig/falsch, Antwortzeit und Punkte bestimmt ausschließlich der Server.
+create or replace function public.submit_answer(p_player_id uuid, p_token text, p_question_index int, p_option text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  me          public.players;
+  g           public.games;
+  v_opt       text := upper(btrim(coalesce(p_option, '')));
+  v_now       timestamptz;
+  v_correct   text;
+  v_remaining int;
+  v_is_correct boolean;
+  v_points    int;
+  v_rt        int;
+  v_id        uuid;
+  v_existing  text;
+begin
+  me := public._player_auth(p_player_id, p_token);
+  if v_opt not in ('A', 'B', 'C', 'D') then raise exception 'OPTION_INVALID'; end if;
+
+  -- FOR SHARE: "Ergebnis anzeigen" (FOR UPDATE) wartet, bis laufende Antworten gespeichert sind
+  select * into g from public.games where id = me.game_id for share;
+  if g.status <> 'question' or g.current_question <> p_question_index then
+    raise exception 'QUESTION_NOT_ACTIVE';
+  end if;
+
+  v_now := clock_timestamp();
+  if v_now < g.question_started_at then raise exception 'QUESTION_NOT_STARTED'; end if;
+  -- kleine Kulanz für Netzwerklatenz; Bonus ist nach der Deadline ohnehin 0
+  if v_now > g.question_ends_at + make_interval(secs => g.grace_ms / 1000.0) then
+    raise exception 'TIME_EXPIRED';
+  end if;
+
+  select selected_option into v_existing from public.answers
+   where player_id = me.id and game_id = g.id and question_index = p_question_index;
+  if found then
+    return jsonb_build_object('status', 'ALREADY_LOCKED', 'question_index', p_question_index, 'selected_option', v_existing);
+  end if;
+
+  select correct_option into v_correct from public.questions where question_index = p_question_index;
+  v_is_correct := (v_opt = v_correct);
+  -- verbleibende VOLLE Sekunden, begrenzt auf 0 … (Dauer − 1)
+  v_remaining := greatest(0, least(g.duration_s - 1,
+                   floor(extract(epoch from (g.question_ends_at - v_now)))::int));
+  v_points := case when v_is_correct then g.base_points + v_remaining * g.bonus_per_second else 0 end;
+  v_rt := greatest(0, round(extract(epoch from (v_now - g.question_started_at)) * 1000)::int);
+
+  insert into public.answers (game_id, player_id, question_index, selected_option, is_correct, response_time_ms, points)
+  values (g.id, me.id, p_question_index, v_opt, v_is_correct, v_rt, v_points)
+  on conflict on constraint answers_one_per_question do nothing
+  returning id into v_id;
+
+  if v_id is null then
+    -- gleichzeitiger zweiter Tab hat gewonnen
+    select selected_option into v_existing from public.answers
+     where player_id = me.id and game_id = g.id and question_index = p_question_index;
+    return jsonb_build_object('status', 'ALREADY_LOCKED', 'question_index', p_question_index, 'selected_option', v_existing);
+  end if;
+
+  update public.players
+     set answered_question = greatest(answered_question, p_question_index), last_seen = v_now
+   where id = me.id;
+
+  -- Bewusst OHNE richtig/falsch: das Ergebnis gibt der Commander frei.
+  return jsonb_build_object('status', 'LOCKED', 'question_index', p_question_index, 'selected_option', v_opt);
+end $$;
+
+-- Lobby verlassen (nur vor dem Start)
+create or replace function public.leave_game(p_player_id uuid, p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare me public.players; v_status text;
+begin
+  me := public._player_auth(p_player_id, p_token);
+  select status into v_status from public.games where id = me.game_id for share;
+  if v_status <> 'lobby' then raise exception 'MISSION_ALREADY_STARTED'; end if;
+  delete from public.players where id = me.id;
+  return jsonb_build_object('ok', true);
+end $$;
+
+
+-- =====================================================================
+-- 5. ÖFFENTLICHE RPC-FUNKTIONEN – COMMANDER (alle mit Host-Token)
+-- =====================================================================
+
+-- Login. Gibt bei falschem Passwort {ok:false} zurück (kein Fehler),
+-- damit der Fehlversuch gespeichert bleibt.
+create or replace function public.host_login(p_password text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_hash  text;
+  v_fails int;
+  v_token text;
+  v_exp   timestamptz := now() + interval '48 hours';
+begin
+  delete from public.login_attempts where attempted_at < now() - interval '1 day';
+  select count(*) into v_fails from public.login_attempts
+   where not success and attempted_at > now() - interval '10 minutes';
+  if v_fails >= 15 then
+    return jsonb_build_object('ok', false, 'error', 'LOGIN_LOCKED');
+  end if;
+
+  select password_hash into v_hash from public.commander_config where id = 1;
+  if v_hash is null then
+    return jsonb_build_object('ok', false, 'error', 'COMMANDER_PASSWORD_NOT_SET');
+  end if;
+
+  if p_password is null or extensions.crypt(p_password, v_hash) <> v_hash then
+    insert into public.login_attempts (success) values (false);
+    return jsonb_build_object('ok', false, 'error', 'LOGIN_FAILED');
+  end if;
+
+  insert into public.login_attempts (success) values (true);
+  delete from public.host_sessions where expires_at < now();
+  v_token := public._new_token();
+  insert into public.host_sessions (token_hash, expires_at) values (public._sha256(v_token), v_exp);
+  return jsonb_build_object('ok', true, 'token', v_token, 'expires_at_ms', public._ms(v_exp));
+end $$;
+
+create or replace function public.host_logout(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  delete from public.host_sessions where token_hash = public._sha256(p_token);
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Session prüfen + letzte offene Mission (für Host-Reload)
+create or replace function public.host_session_info(p_token text)
+returns jsonb language plpgsql stable security definer set search_path = ''
+as $$
+declare v_exp timestamptz; g public.games;
+begin
+  select expires_at into v_exp from public.host_sessions
+   where token_hash = public._sha256(p_token) and expires_at > now();
+  if v_exp is null then return jsonb_build_object('valid', false); end if;
+  select * into g from public.games
+   where status not in ('finished', 'aborted') and created_at > now() - interval '2 days'
+   order by created_at desc limit 1;
+  return jsonb_build_object(
+    'valid', true,
+    'expires_at_ms', public._ms(v_exp),
+    'active_game', case when g.id is null then null
+                        else jsonb_build_object('id', g.id, 'code', g.code, 'status', g.status,
+                                                'current_question', g.current_question) end);
+end $$;
+
+-- Neue Mission mit eindeutigem 6-stelligem Code
+create or replace function public.host_create_game(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_session text := public._sha256(p_token);
+  r         public.game_rules;
+  g         public.games;
+  v_code    text;
+  v_tries   int := 0;
+begin
+  perform public._require_host(p_token);
+  -- Doppelklick-Schutz: Aufrufe derselben Session nacheinander abarbeiten …
+  perform pg_advisory_xact_lock(hashtextextended('olp-create-' || v_session, 0));
+  -- … und eine gerade erst erstellte, leere Mission wiederverwenden
+  select * into g from public.games
+   where created_by = v_session and status = 'lobby' and created_at > now() - interval '10 seconds'
+     and not exists (select 1 from public.players p where p.game_id = games.id)
+   order by created_at desc limit 1;
+  if found then return public._host_state(g.id); end if;
+
+  select * into r from public.game_rules where id = 1;
+  loop
+    v_code := (100000 + floor(random() * 900000))::int::text;
+    begin
+      insert into public.games (code, duration_s, base_points, bonus_per_second, lead_in_ms, grace_ms, max_players, created_by)
+      values (v_code, r.question_duration_s, r.base_points, r.bonus_per_second, r.lead_in_ms, r.grace_ms, r.max_players, v_session)
+      returning * into g;
+      exit;
+    exception when unique_violation then
+      v_tries := v_tries + 1;
+      if v_tries > 25 then raise exception 'CODE_GENERATION_FAILED'; end if;
+    end;
+  end loop;
+  return public._host_state(g.id);
+end $$;
+
+create or replace function public.host_get_state(p_token text, p_game_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  return public._host_state(p_game_id);
+end $$;
+
+-- Zentraler, idempotenter Fortschritt. Der Client sagt, von welchem Zustand
+-- er ausgeht. Stimmt der nicht mehr (z. B. Doppelklick), passiert nichts.
+--   lobby       → Frage 1          (MISSION STARTEN)
+--   question    → results          (ERGEBNIS ANZEIGEN, Punkte werden gutgeschrieben)
+--   results     → nächste Frage    (NÄCHSTE FRAGE)
+--               → phase_break      (ZWISCHENRANKING, nach letzter Frage von Phase I)
+--               → finished         (FINALE ANZEIGEN, nach letzter Frage)
+--   phase_break → erste Frage Phase II (PHASE II STARTEN)
+create or replace function public.host_advance(p_token text, p_game_id uuid, p_expected_status text, p_expected_question int)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  g        public.games;
+  v_action text;
+  v_next   int;
+begin
+  perform public._require_host(p_token);
+  select * into g from public.games where id = p_game_id for update;
+  if not found then raise exception 'MISSION_NOT_FOUND'; end if;
+
+  if g.status <> p_expected_status or g.current_question <> p_expected_question then
+    return public._host_state(g.id) || jsonb_build_object('changed', false);
+  end if;
+
+  v_action := public._next_action(g);
+
+  if v_action = 'start' then
+    if not exists (select 1 from public.players where game_id = g.id) then
+      raise exception 'NO_PLAYERS';
+    end if;
+    select min(question_index) into v_next from public.questions;
+    if v_next is null then raise exception 'NO_QUESTIONS'; end if;
+    perform public._start_question(g.id, v_next);
+
+  elsif v_action = 'reveal' then
+    update public.games
+       set status = 'results',
+           question_ends_at = least(question_ends_at, clock_timestamp()),
+           state_version = state_version + 1,
+           updated_at = now()
+     where id = g.id;
+    -- Punkte (und Tie-Breaker-Zeit) dieser Frage gutschreiben – genau einmal,
+    -- da der Statuswechsel unter Zeilensperre passiert
+    update public.players p
+       set score = p.score + a.points,
+           correct_time_ms = p.correct_time_ms + case when a.is_correct then a.response_time_ms else 0 end
+      from public.answers a
+     where a.game_id = g.id and a.question_index = g.current_question
+       and a.player_id = p.id;
+
+  elsif v_action in ('next', 'start_phase') then
+    select min(question_index) into v_next from public.questions where question_index > g.current_question;
+    perform public._start_question(g.id, v_next);
+
+  elsif v_action = 'phase_break' then
+    update public.games set status = 'phase_break', state_version = state_version + 1, updated_at = now()
+     where id = g.id;
+
+  elsif v_action = 'final' then
+    update public.games set status = 'finished', state_version = state_version + 1, updated_at = now()
+     where id = g.id;
+
+  else
+    raise exception 'MISSION_CLOSED';
+  end if;
+
+  return public._host_state(g.id) || jsonb_build_object('changed', true);
+end $$;
+
+-- Antworten vorzeitig schließen
+create or replace function public.host_close_answers(p_token text, p_game_id uuid, p_question_index int)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  update public.games
+     set question_ends_at = greatest(question_started_at, clock_timestamp()),
+         state_version = state_version + 1,
+         updated_at = now()
+   where id = p_game_id and status = 'question' and current_question = p_question_index
+     and question_ends_at > clock_timestamp();
+  return public._host_state(p_game_id);
+end $$;
+
+-- Mission zurücksetzen = schließen/archivieren (Daten bleiben zur Kontrolle erhalten)
+create or replace function public.host_reset_game(p_token text, p_game_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  update public.games
+     set status = 'aborted', state_version = state_version + 1, updated_at = now()
+   where id = p_game_id and status <> 'aborted';
+  return public._host_state(p_game_id);
+end $$;
+
+-- Spieler aus der Lobby entfernen (z. B. Tippfehler im Callsign)
+create or replace function public.host_remove_player(p_token text, p_player_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare v_game uuid; v_status text;
+begin
+  perform public._require_host(p_token);
+  select p.game_id, g.status into v_game, v_status
+    from public.players p join public.games g on g.id = p.game_id
+   where p.id = p_player_id;
+  if v_game is null then raise exception 'PLAYER_NOT_FOUND'; end if;
+  if v_status <> 'lobby' then raise exception 'MISSION_ALREADY_STARTED'; end if;
+  delete from public.players where id = p_player_id;
+  return public._host_state(v_game);
+end $$;
+
+
+-- =====================================================================
+-- 6. ADMIN-FUNKTION (nur im SQL Editor ausführbar, NICHT aus dem Browser)
+-- =====================================================================
+
+create or replace function public.set_commander_password(p_password text)
+returns text language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  if p_password is null or char_length(p_password) < 8 then
+    raise exception 'Das Commander-Passwort muss mindestens 8 Zeichen lang sein.';
+  end if;
+  if upper(p_password) in ('DEIN-GEHEIMES-PASSWORT', 'PASSWORT', 'PASSWORD', '12345678') then
+    raise exception 'Bitte ein eigenes Passwort wählen, nicht den Platzhalter.';
+  end if;
+  insert into public.commander_config (id, password_hash)
+  values (1, extensions.crypt(p_password, extensions.gen_salt('bf', 10)))
+  on conflict (id) do update set password_hash = excluded.password_hash, updated_at = now();
+  delete from public.host_sessions;   -- alte Logins ungültig machen
+  return 'Commander-Passwort gesetzt. Bestehende Host-Logins wurden abgemeldet.';
+end $$;
+
+
+-- =====================================================================
+-- 7. ROW LEVEL SECURITY + RECHTE
+-- =====================================================================
+
+alter table public.game_rules       enable row level security;
+alter table public.commander_config enable row level security;
+alter table public.host_sessions    enable row level security;
+alter table public.login_attempts   enable row level security;
+alter table public.games            enable row level security;
+alter table public.players          enable row level security;
+alter table public.player_tokens    enable row level security;
+alter table public.questions        enable row level security;
+alter table public.answers          enable row level security;
+
+-- Zuerst alles entziehen …
+revoke all on table
+  public.game_rules, public.commander_config, public.host_sessions, public.login_attempts,
+  public.games, public.players, public.player_tokens, public.questions, public.answers
+from public, anon, authenticated;
+
+-- … dann nur Lesen von games/players erlauben (für Lobby-Liste + Realtime).
+grant usage on schema public to anon, authenticated;
+grant select on table public.games, public.players to anon, authenticated;
+
+drop policy if exists "games: lesen erlaubt" on public.games;
+create policy "games: lesen erlaubt" on public.games
+  for select to anon, authenticated using (true);
+
+drop policy if exists "players: lesen erlaubt" on public.players;
+create policy "players: lesen erlaubt" on public.players
+  for select to anon, authenticated using (true);
+
+-- Für alle anderen Tabellen gibt es bewusst KEINE Policy → kein Zugriff.
+
+-- Funktionen: Standardmäßig darf in PostgreSQL jeder jede Funktion ausführen.
+-- Das wird für ALLE Funktionen dieses Projekts entzogen …
+revoke all on function
+  public._sha256(text), public._new_token(), public._ms(timestamptz), public._clean_callsign(text),
+  public._require_host(text), public._player_auth(uuid, text), public._max_score(public.games),
+  public._game_json(public.games), public._question_json(int), public._start_question(uuid, int),
+  public._next_action(public.games), public._host_state(uuid),
+  public.server_time(), public.join_game(text, text), public.get_player_state(uuid, text, boolean),
+  public.submit_answer(uuid, text, int, text), public.leave_game(uuid, text),
+  public.host_login(text), public.host_logout(text), public.host_session_info(text),
+  public.host_create_game(text), public.host_get_state(text, uuid),
+  public.host_advance(text, uuid, text, int), public.host_close_answers(text, uuid, int),
+  public.host_reset_game(text, uuid), public.host_remove_player(text, uuid),
+  public.set_commander_password(text)
+from public, anon, authenticated;
+
+-- … und nur die öffentlichen RPCs wieder freigegeben.
+grant execute on function
+  public.server_time(), public.join_game(text, text), public.get_player_state(uuid, text, boolean),
+  public.submit_answer(uuid, text, int, text), public.leave_game(uuid, text),
+  public.host_login(text), public.host_logout(text), public.host_session_info(text),
+  public.host_create_game(text), public.host_get_state(text, uuid),
+  public.host_advance(text, uuid, text, int), public.host_close_answers(text, uuid, int),
+  public.host_reset_game(text, uuid), public.host_remove_player(text, uuid)
+to anon, authenticated;
+
+
+-- =====================================================================
+-- 8. REALTIME (games + players in die Supabase-Realtime-Publication)
+-- =====================================================================
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (select 1 from pg_publication_tables
+                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'games') then
+      alter publication supabase_realtime add table public.games;
+    end if;
+    if not exists (select 1 from pg_publication_tables
+                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'players') then
+      alter publication supabase_realtime add table public.players;
+    end if;
+  else
+    raise notice 'Publication supabase_realtime nicht gefunden – Realtime bitte im Dashboard aktivieren (siehe README).';
+  end if;
+end $$;
+
+
+-- =====================================================================
+-- 9. KONTROLLE – sollte 20 Fragen anzeigen
+-- =====================================================================
+
+select
+  (select count(*) from public.questions)                        as fragen,
+  (select count(*) from public.questions where phase = 1)        as phase_1,
+  (select count(*) from public.questions where phase = 2)        as phase_2,
+  (select count(*) from public.commander_config)                 as commander_passwort_gesetzt;

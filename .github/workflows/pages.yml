@@ -1,0 +1,84 @@
+# =====================================================================
+#  OPERATION LAN-PARTY – Veröffentlichung auf GitHub Pages
+#  Läuft automatisch bei jedem Push auf "main" (oder manuell über
+#  Actions → "GitHub Pages veröffentlichen" → "Run workflow").
+#  Kein Build-Schritt nötig: Es werden nur die Dateien kopiert und
+#  js/config.js aus den Repository-Variablen erzeugt.
+# =====================================================================
+name: GitHub Pages veröffentlichen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v7
+
+      - name: js/config.js aus Repository-Variablen erzeugen
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
+            node -e '
+              const fs = require("fs");
+              const cfg = { SUPABASE_URL: process.env.SUPABASE_URL.trim(), SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY.trim() };
+              fs.writeFileSync("js/config.js", "export const CONFIG = " + JSON.stringify(cfg, null, 2) + ";\n");
+            '
+            echo "js/config.js wurde aus den Repository-Variablen erzeugt."
+          elif [ -f js/config.js ]; then
+            echo "Keine Variablen gesetzt – verwende die eingecheckte js/config.js."
+          else
+            echo "::error::SUPABASE_URL und SUPABASE_ANON_KEY fehlen. Repository → Settings → Secrets and variables → Actions → Tab 'Variables' → 'New repository variable' (siehe README, Schritt 5)."
+            exit 1
+          fi
+
+      - name: Sicherheitscheck – kein Secret-/service_role-Key im Browser
+        run: |
+          node -e '
+            const src = require("fs").readFileSync("js/config.js", "utf8");
+            const m = src.match(/SUPABASE_ANON_KEY"?\s*:\s*"([^"]+)"/);
+            const key = m ? m[1] : "";
+            let bad = /^sb_secret_/i.test(key);
+            const parts = key.split(".");
+            if (parts.length === 3) {
+              try { bad = bad || JSON.parse(Buffer.from(parts[1], "base64url").toString()).role === "service_role"; } catch {}
+            }
+            if (bad) { console.log("::error::In js/config.js steht ein SECRET/service_role-Key! Nur den anon/publishable Key verwenden."); process.exit(1); }
+            console.log("OK – kein Secret Key gefunden.");
+          '
+
+      - name: Webseite zusammenstellen
+        run: |
+          mkdir -p _site
+          cp -r index.html host.html favicon.svg css js sounds _site/
+          ls -R _site
+
+      - name: GitHub Pages vorbereiten
+        uses: actions/configure-pages@v6
+
+      - name: Webseite hochladen
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: Veröffentlichen
+        id: deployment
+        uses: actions/deploy-pages@v5

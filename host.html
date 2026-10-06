@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https: wss: http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0f0f0e">
+  <meta name="color-scheme" content="dark">
+  <title>Mission Control</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./css/style.css">
+  <script type="module" src="./js/host.js"></script>
+</head>
+<body class="page page--host">
+  <a class="skip-link" href="#app">Zum Inhalt springen</a>
+  <header class="topbar topbar--host">
+    <div class="topbar__brand">
+      <span class="topbar__mark" aria-hidden="true">◢◤</span>
+      <span class="topbar__name">MISSION CONTROL <span class="topbar__dim">// NJORGIBICEPS // COMMANDER</span></span>
+    </div>
+    <div class="topbar__tools">
+      <span id="link-led" class="led-badge" data-state="" title=""><span class="led" aria-hidden="true"></span><span class="led__label"></span></span>
+      <button id="sound-toggle" type="button" class="btn btn--tiny" aria-pressed="true">SOUND ON</button>
+      <button id="fullscreen-toggle" type="button" class="btn btn--tiny">VOLLBILD</button>
+      <button id="logout" type="button" class="btn btn--tiny" hidden>LOGOUT</button>
+    </div>
+  </header>
+
+  <div id="net-banner" class="net-banner" role="alert" hidden>
+    <strong>VERBINDUNG ZUM HQ VERLOREN</strong>
+    <span>RECONNECTING…</span>
+  </div>
+
+  <main id="app" class="main" tabindex="-1">
+    <section class="card card--center card--narrow">
+      <h1 class="title title--md">LADE MISSION CONTROL…</h1>
+      <noscript><p class="lead">Bitte JavaScript aktivieren.</p></noscript>
+    </section>
+  </main>
+
+  <p id="sr-status" class="sr-only" role="status" aria-live="polite"></p>
+</body>
+</html>
