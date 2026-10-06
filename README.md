@@ -2,7 +2,7 @@
 
 Multiplayer-Quiz, Game Counter und Turnier für die **OPERATION LAN PARTY** am **14.11.2026, 14:00 Uhr**. Commander-Account: **havoc**.
 
-Die Startseite bietet drei Bereiche: **01 QUIZ**, **02 GAME COUNTER** (Team-Bilanz + CS-Stats eures 5er-Teams) und **03 BRACKET** (1v1-Turnier) – siehe [Game Counter & Bracket](#game-counter--bracket). Dazu kommen ein **Operator-Login** für alle Bereiche und **MISSION OPS** (Anwesenheit, Hold-Screen) für den Commander – siehe [Login, Mission Ops & Hold-Screen](#login-mission-ops--hold-screen).
+Start der Seite ist der **OPERATOR LOGIN**. Danach bietet die Startseite drei Bereiche: **01 QUIZ**, **02 BRACKET** (1v1-Turnier) und **03 GAME COUNTER** (Team-Bilanz + CS-Stats eures 5er-Teams) – siehe [Game Counter & Bracket](#game-counter--bracket). Dazu kommen ein **Operator-Login** für alle Bereiche und **MISSION OPS** (Anwesenheit, Hold-Screen) für den Commander – siehe [Login, Mission Ops & Hold-Screen](#login-mission-ops--hold-screen).
 
 Der Host (du) zeigt **MISSION CONTROL** auf PC, TV oder Beamer. Die Gäste scannen einen QR-Code, wählen einen Callsign und spielen auf dem Smartphone mit – ohne App, einfach im Browser. 20 Counter-Strike-2-Fragen in zwei Phasen, synchronisierter Countdown, Punkte live, Zwischenranking, Siegerpodium, **TOP OPERATOR**, **MISSION ACCOMPLISHED**.
 
@@ -30,9 +30,9 @@ Eine Quiz-Web-App im Stil einer taktischen Special-Operations-Mission:
 
 | Schritt | Host (PC/TV) | Spieler (Smartphone) |
 |---|---|---|
-| 1 | `host.html` öffnen → **COMMANDER LOGIN** → **NEUE MISSION** | – |
-| 2 | Mission Code + QR-Code werden angezeigt | QR-Code scannen (Code ist vorausgefüllt) |
-| 3 | Spieler erscheinen live in der Lobby | Callsign eingeben → **MISSION BEITRETEN** → „WAITING FOR COMMANDER“ |
+| 1 | Als **havoc** einloggen → **MISSION CONTROL** → **NEUE MISSION** | Seite öffnen → **OPERATOR LOGIN** (Start-Bildschirm) |
+| 2 | Lobby zeigt Mission Code + Anleitung | **QUIZ** antippen |
+| 3 | Spieler erscheinen live in der Lobby | **ALS [NAME] BEITRETEN** → „WAITING FOR COMMANDER“ |
 | 4 | **MISSION STARTEN** | Alle bekommen gleichzeitig Frage 1 |
 | 5 | Countdown (20 s), Antwortzähler | Antwort wählen → **ANTWORT BESTÄTIGEN** → „ANSWER LOCKED“ |
 | 6 | **ERGEBNIS ANZEIGEN** | „TARGET ELIMINATED +165 PTS“ oder „TARGET MISSED 0 PTS“ |
@@ -322,7 +322,7 @@ Beide Bereiche sind unabhängig vom Quiz, laufen aber über dieselbe Supabase-Da
 
 **Operator-Login (`login.html`)** – ein Account (Benutzername + Passwort) gilt für alles:
 
-* **Quiz:** Eingeloggt erscheint auf der Quiz-Seite **ALS [NAME] BEITRETEN** – ohne QR-Code und ohne Mission Code, Callsign = Benutzername. Funktioniert auch auf mehreren Geräten und zum Wiedereinsteigen in eine laufende Mission. Gäste ohne Account nutzen weiter QR-Code bzw. Code + Callsign.
+* **Quiz:** Beitritt nur mit Login: **ALS [NAME] BEITRETEN** – kein QR-Code, kein Mission Code, Callsign = Benutzername. Funktioniert auch auf mehreren Geräten und zum Wiedereinsteigen in eine laufende Mission. Ohne Login führt die Quiz-Seite zum Login. Der Commander **havoc** ist MISSION CONTROL und spielt nicht mit.
 * **Game Counter:** Der Commander trägt das 5er-Team mit den **Benutzernamen** ein (Vorschläge aus den Accounts). Nach jedem Match trägt **jeder Spieler seine eigenen Stats** ein: Kills, Assists, Deaths, HS %, ADR, MVPs (**MEINE STATS EINTRAGEN** bzw. Banner oben). Daraus entstehen das **Squad Leaderboard** (sortierbar: K/D, ADR, HS % …) und ein **Scoreboard pro Match** (**STATS 3/5 ▾**).
 * **Bracket:** Beim Setup Accounts antippen oder **EINGECHECKTE ÜBERNEHMEN**; der eigene Name ist grün markiert.
 * **Profil:** Check-in-Status, aktuelle Quiz-Mission, eigene CS-Stats + offene Matches, Bracket-Teilnahme.

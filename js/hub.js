@@ -5,16 +5,24 @@
 // =====================================================================
 
 import { startHeartbeat, getAccount } from './account.js';
-import { initGate } from './gate.js';
+import { initGate, commanderSession } from './gate.js';
+import { configStatus } from './supabase-client.js';
 
 const params = new URLSearchParams(window.location.search);
 if (params.has('game')) {
   window.location.replace(`./quiz.html${window.location.search}`);
+} else if (configStatus.ok && !getAccount() && !(await commanderSession())) {
+  // Start der Seite = OPERATOR LOGIN
+  window.location.replace('./login.html');
 } else {
   startHeartbeat();
   initGate();
   // Der Commander ist MISSION CONTROL: Quiz-Kachel führt direkt dorthin
   const acc = getAccount();
+  if (!(acc && acc.commander)) {
+    // Commander-Bereiche nur für den Commander anzeigen
+    document.querySelectorAll('.hub-tile__sub, .hub-link--cmd').forEach((el) => el.remove());
+  }
   const quiz = document.querySelector('.hub-tile__main[href="./quiz.html"]');
   if (acc && acc.commander && quiz) {
     quiz.setAttribute('href', './host.html');

@@ -19,8 +19,7 @@ let refreshTimer = null;
 async function init() {
   renderAccountLink();
   if (!configStatus.ok) { renderConfigError(app, configStatus); return; }
-  initGate();
-  if (getAccount()) await showProfile();
+  if (getAccount()) { initGate(); await showProfile(); }
   else renderAuth('login');
 }
 
@@ -29,6 +28,8 @@ async function init() {
 // ---------------------------------------------------------------------
 function renderAuth(mode, message = '') {
   clearInterval(refreshTimer);
+  // Start-Bildschirm: ohne Login gibt es noch kein Menü
+  document.querySelector('.topbar__back')?.setAttribute('hidden', '');
   const isLogin = mode === 'login';
   const user = h('input', { id: 'acc-user', class: 'input', maxlength: '24', autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false', required: true, placeholder: 'z. B. HeadshotHans' });
   const pass = h('input', { id: 'acc-pass', type: 'password', class: 'input', maxlength: '64', autocomplete: isLogin ? 'current-password' : 'new-password', required: true });
@@ -57,8 +58,7 @@ function renderAuth(mode, message = '') {
       setAccount(res.token, res.username, res.commander);
       if (res.host_token) storage.set('olp.host', { token: res.host_token });
       toast(isLogin ? `WILLKOMMEN ZURÜCK, ${res.username}` : `ACCOUNT ${res.username} ERSTELLT`);
-      if (returnTo) { window.location.href = `./${returnTo}`; return; }
-      await showProfile();
+      window.location.href = `./${returnTo || 'index.html'}`;
     } catch (e) {
       error.textContent = errorText(e.code);
     } finally {
@@ -69,11 +69,12 @@ function renderAuth(mode, message = '') {
   switchBtn.addEventListener('click', () => renderAuth(isLogin ? 'register' : 'login'));
 
   mount(app,
-    h('section', { class: 'card card--briefing' },
+    h('section', { class: 'card card--briefing start-card' },
       stamp(isLogin ? 'RESTRICTED' : 'ENLIST'),
-      h('p', { class: 'eyebrow', text: TEXT.org }),
-      h('h1', { class: 'title title--xl', text: isLogin ? 'OPERATOR LOGIN' : 'ENLIST' }),
-      h('p', { class: 'subtitle', text: 'EIN LOGIN FÜR QUIZ, STATS & BRACKET' }),
+      h('p', { class: 'eyebrow', text: `${TEXT.org} // ${TEXT.eventDate} // ${TEXT.eventTime}` }),
+      h('h1', { class: 'title title--xl' }, 'OPERATION', h('br'), 'LAN PARTY'),
+      h('p', { class: 'subtitle', text: isLogin ? 'OPERATOR LOGIN' : 'ENLIST // NEUER OPERATOR' }),
+      h('p', { class: 'field__hint', text: 'Ein Login für Quiz, CS-Stats und Bracket. Nach dem Login wartest du, bis der Commander alle eingecheckt hat.' }),
       h('div', { class: 'stripes', 'aria-hidden': 'true' }),
       form,
       switchBtn,
@@ -116,7 +117,7 @@ function renderProfile(me) {
     try { if (a) await rpc('account_logout', { p_token: a.token }); } catch { /* egal */ }
     clearAccount();
     if (me.commander) storage.remove('olp.host');
-    renderAuth('login');
+    window.location.replace('./login.html');
   });
 
   mount(app,
@@ -144,7 +145,12 @@ function renderProfile(me) {
         quiz && quiz.joined ? 'ZUR MISSION ▸' : quiz && quiz.status === 'lobby' ? `ALS ${me.username} BEITRETEN ▸` : 'ZUM QUIZ ▸')),
 
     h('section', { class: 'card profile__section' },
-      h('p', { class: 'eyebrow', text: '02 // GAME COUNTER – MEINE CS-STATS' }),
+      h('p', { class: 'eyebrow', text: '02 // BRACKET' }),
+      h('p', { class: 'lead', text: me.tournament.participant ? 'Du bist im 1v1-Turnier eingetragen.' : 'Du bist (noch) nicht im 1v1-Turnier eingetragen.' }),
+      h('a', { class: 'btn btn--ghost btn--block', href: './bracket.html' }, 'ZUM BRACKET ▸')),
+
+    h('section', { class: 'card profile__section' },
+      h('p', { class: 'eyebrow', text: '03 // GAME COUNTER – MEINE CS-STATS' }),
       me.team.in_roster
         ? h('dl', { class: 'facts facts--stats' },
             statBox('MATCHES', String(t.matches)), statBox('K / D', kd), statBox('KILLS', String(t.kills)),
@@ -153,11 +159,6 @@ function renderProfile(me) {
       me.team.pending_stats
         ? h('a', { class: 'btn btn--primary btn--block', href: './counter.html' }, `${me.team.pending_stats} ${me.team.pending_stats === 1 ? 'MATCH' : 'MATCHES'} OHNE STATS – JETZT EINTRAGEN ▸`)
         : h('a', { class: 'btn btn--ghost btn--block', href: './counter.html' }, 'ZUM GAME COUNTER ▸')),
-
-    h('section', { class: 'card profile__section' },
-      h('p', { class: 'eyebrow', text: '03 // BRACKET' }),
-      h('p', { class: 'lead', text: me.tournament.participant ? 'Du bist im 1v1-Turnier eingetragen.' : 'Du bist (noch) nicht im 1v1-Turnier eingetragen.' }),
-      h('a', { class: 'btn btn--ghost btn--block', href: './bracket.html' }, 'ZUM BRACKET ▸')),
 
     h('div', { class: 'card__foot' }, logout));
 }

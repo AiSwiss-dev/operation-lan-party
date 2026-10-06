@@ -2,7 +2,6 @@ Drittanbieter-Lizenzen der Dateien in js/vendor/
 ================================================
 
 supabase.js = Bundle von @supabase/supabase-js 2.117.2 inkl. Abhängigkeiten (erstellt mit esbuild)
-qrcode.js   = qrcode-generator 2.0.4 von Kazuhiko Arase (MIT, Lizenzhinweis im Dateikopf)
 
 ------------------------------------------------------------
 @supabase/supabase-js 2.117.2 (MIT)

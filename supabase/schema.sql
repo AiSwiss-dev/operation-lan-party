@@ -1399,7 +1399,8 @@ returns jsonb language plpgsql volatile security definer set search_path = ''
 as $$
 declare v_name text; v_id uuid;
 begin
-  if not public._site_open() then raise exception 'SITE_ON_HOLD'; end if;
+  -- Login/Registrierung ist der Start-Bildschirm und auch während des Holds
+  -- möglich; danach sehen Spieler den Hold-Screen bis zum Check-in.
   v_name := public._clean_label(p_username, 24);
   if char_length(v_name) < 2 then raise exception 'NAME_LENGTH'; end if;
   if p_password is null or char_length(p_password) < 4 or char_length(p_password) > 64 then
@@ -1436,9 +1437,6 @@ begin
     return jsonb_build_object('ok', false, 'error', 'LOGIN_FAILED');
   end if;
   update public.accounts set failed_logins = 0, locked_until = null, last_seen = now() where id = a.id;
-  if not a.is_commander and not public._site_open() then
-    return jsonb_build_object('ok', false, 'error', 'SITE_ON_HOLD');
-  end if;
   if a.is_commander then
     v_host := public._new_token();
     delete from public.host_sessions where expires_at < now();

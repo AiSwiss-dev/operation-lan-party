@@ -14,6 +14,8 @@ async function register(page, user, pw) {
   await page.fill('#acc-pass', pw);
   await page.fill('#acc-pass2', pw);
   await page.click('form button[type=submit]');
+  await page.waitForSelector('.hub-tile');
+  await page.goto(B.SITE + 'login.html');
   await page.waitForSelector('.profile__name');
 }
 async function login(page, user, pw, ret = '') {
@@ -68,7 +70,7 @@ try {
   // ===== Hold-Screen =====
   console.log('HOLD');
   const tv = await B.newPage('tv', { width: 1920, height: 1080 });
-  await tv.goto(B.SITE);
+  await login(tv, 'AWP_Gott', 'awp123');   // Start = Login, danach Startseite
   await tv.waitForSelector('.hub-tile');
   check(await tv.isHidden('#hold'), 'site open while hold is off');
   await cmd.click('button:text("HOLD-SCREEN AKTIVIEREN")');
@@ -80,25 +82,32 @@ try {
   await phone.waitForSelector('#hold:not([hidden])', { timeout: 10000 });
   check(await noHScroll(phone), 'hold screen phone: no horizontal scroll');
   await phone.screenshot({ path: `${OUT}/hold-390.png` });
-  await p1.goto(B.SITE + 'login.html');
-  await p1.waitForSelector('#hold:not([hidden])', { timeout: 10000 });
-  check(true, 'login page is locked during hold too');
+  // Start der Seite = Login; Login geht auch während des Holds, danach Hold-Screen
   const outsider = await B.newPage('outsider');
-  await outsider.goto(B.SITE + 'login.html');
+  await outsider.goto(B.SITE);
+  await outsider.waitForURL(/login\.html$/, { timeout: 10000 });
+  await outsider.waitForSelector('#acc-user');
+  check(await outsider.isHidden('#hold'), 'start screen = login form, usable during hold');
+  await outsider.fill('#acc-user', 'RushB');
+  await outsider.fill('#acc-pass', 'rushb!!');
+  await outsider.click('form button[type=submit]');
+  await outsider.waitForURL(/index\.html$/, { timeout: 10000 });
   await outsider.waitForSelector('#hold:not([hidden])', { timeout: 10000 });
+  check(true, 'after login a player sees the hold screen');
   const blocked = await outsider.evaluate(async () => {
     const m = await import('./js/supabase-client.js');
-    try { return await m.rpc('account_login', { p_username: 'RushB', p_password: 'rushb!!' }); } catch (e) { return { error: e.code }; }
+    const acc = JSON.parse(localStorage.getItem('olp.account'));
+    try { return await m.rpc('join_game_account', { p_token: acc.token }); } catch (e) { return { error: e.code }; }
   });
-  check(blocked.ok === false && blocked.error === 'SITE_ON_HOLD', 'server rejects player login during hold', blocked);
+  check(blocked.error === 'SITE_ON_HOLD', 'server blocks quiz join during hold', blocked);
   await outsider.context().close();
-  // Commander kommt über den Hold-Screen durch
+  // Commander loggt sich über den Start-Bildschirm ein und hat keinen Hold
   const cmdPhone = await B.newPage('havoc-phone', { width: 390, height: 844 });
   await cmdPhone.goto(B.SITE);
-  await cmdPhone.waitForSelector('#hold:not([hidden])');
-  await cmdPhone.click('.hold__cmd');
-  await cmdPhone.fill('#hold-pass', PASSWORD);
-  await cmdPhone.click('dialog button[type=submit]');
+  await cmdPhone.waitForSelector('#acc-user');
+  await cmdPhone.fill('#acc-user', 'havoc');
+  await cmdPhone.fill('#acc-pass', PASSWORD);
+  await cmdPhone.click('form button[type=submit]');
   await cmdPhone.waitForSelector('.hub-tile', { state: 'visible', timeout: 10000 });
   check(await cmdPhone.isHidden('#hold'), 'commander havoc has no hold (normal site)');
   await cmdPhone.goto(B.SITE + 'counter.html');

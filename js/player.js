@@ -82,66 +82,16 @@ function focusTitle() {
 // ---------------------------------------------------------------------
 // Beitritt
 // ---------------------------------------------------------------------
-function renderJoin({ code = '', callsign = '', error = '' } = {}) {
+function renderJoin({ error = '' } = {}) {
   screenKey = 'join';
   setLinkLed('');
-  const codeInput = h('input', {
-    id: 'mission-code', name: 'code', class: 'input input--code', inputmode: 'numeric',
-    autocomplete: 'off', maxlength: '6', pattern: '[0-9]{6}', placeholder: '000000',
-    'aria-describedby': 'join-error', value: code, required: true,
-  });
-  const callsignInput = h('input', {
-    id: 'callsign', name: 'callsign', class: 'input', maxlength: '24', autocomplete: 'nickname',
-    autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', placeholder: 'z. B. HeadshotHans',
-    'aria-describedby': 'join-error callsign-hint', value: callsign, required: true,
-  });
-  const errorBox = h('p', { id: 'join-error', class: 'form-error', role: 'alert', text: error });
-  const submit = h('button', { type: 'submit', class: 'btn btn--primary btn--block' }, 'MISSION BEITRETEN');
-
-  codeInput.addEventListener('input', () => { codeInput.value = onlyDigits(codeInput.value); });
-
-  const form = h('form', { class: 'form', novalidate: true },
-    h('div', { class: 'field' },
-      h('label', { for: 'mission-code', class: 'field__label' }, 'MISSION CODE'),
-      codeInput),
-    h('div', { class: 'field' },
-      h('label', { for: 'callsign', class: 'field__label' }, 'CALLSIGN'),
-      callsignInput,
-      h('p', { id: 'callsign-hint', class: 'field__hint', text: '2–24 Zeichen. Wird für alle sichtbar angezeigt.' })),
-    errorBox,
-    submit);
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const c = onlyDigits(codeInput.value);
-    const name = cleanCallsign(callsignInput.value);
-    errorBox.textContent = '';
-    if (c.length !== 6) { errorBox.textContent = errorText('MISSION_CODE_INVALID'); codeInput.focus(); return; }
-    const problem = callsignProblem(name);
-    if (problem) { errorBox.textContent = errorText(problem); callsignInput.focus(); return; }
-
-    submit.disabled = true;
-    submit.textContent = 'VERBINDE MIT HQ…';
-    try {
-      const res = await rpc('join_game', { p_code: c, p_callsign: name });
-      const s = { code: res.code, gameId: res.game_id, playerId: res.player_id, token: res.player_token, callsign: res.callsign };
-      storage.set(sessionKey(s.code), s);
-      storage.set(LAST_KEY, s.code);
-      sfx.lock();
-      startSession(s);
-    } catch (e) {
-      errorBox.textContent = errorText(e.code);
-      submit.disabled = false;
-      submit.textContent = 'MISSION BEITRETEN';
-      if (e.code === 'CALLSIGN_TAKEN' || e.code === 'CALLSIGN_LENGTH' || e.code === 'CALLSIGN_CHARS') callsignInput.focus();
-      else if (e.code === 'MISSION_NOT_FOUND' || e.code === 'MISSION_CODE_INVALID') codeInput.focus();
-    }
-  });
-
-  // Mit Login: ohne QR/Code der aktuellen Mission beitreten, Callsign = Benutzername
   const acc = getAccount();
-  let accountPanel;
-  if (acc && acc.commander) {
+  // Quiz nur mit Login – kein QR-Code, kein Gast-Beitritt
+  if (!acc) {
+    window.location.replace('./login.html?return=quiz.html');
+    return;
+  }
+  if (acc.commander) {
     mount(app,
       h('section', { class: 'card card--briefing' },
         stamp('COMMAND'),
@@ -155,34 +105,25 @@ function renderJoin({ code = '', callsign = '', error = '' } = {}) {
     announce('Commander: Mission Control');
     return;
   }
-  if (acc) {
-    const joinAcc = h('button', { type: 'button', class: 'btn btn--primary btn--block btn--xl', id: 'join-account' }, `ALS ${acc.username} BEITRETEN`);
-    const accErr = h('p', { class: 'form-error', role: 'alert' });
-    joinAcc.addEventListener('click', async () => {
-      joinAcc.disabled = true;
-      accErr.textContent = '';
-      try {
-        const res = await rpc('join_game_account', { p_token: acc.token, p_code: onlyDigits(codeInput.value) || null });
-        const s = { code: res.code, gameId: res.game_id, playerId: res.player_id, token: res.player_token, callsign: res.callsign };
-        storage.set(sessionKey(s.code), s);
-        storage.set(LAST_KEY, s.code);
-        sfx.lock();
-        startSession(s);
-      } catch (e) {
-        if (e.code === 'ACCOUNT_UNAUTHORIZED') { clearAccount(); renderJoin({ code: codeInput.value, error: 'LOGIN ABGELAUFEN – BITTE NEU EINLOGGEN' }); return; }
-        accErr.textContent = e.code === 'NO_ACTIVE_MISSION' ? 'KEINE OFFENE MISSION – WARTE AUF DEN COMMANDER' : errorText(e.code);
-        joinAcc.disabled = false;
-      }
-    });
-    accountPanel = h('div', { class: 'acc-join' },
-      h('p', { class: 'eyebrow', text: `EINGELOGGT ALS ${acc.username}` }),
-      joinAcc,
-      h('p', { class: 'field__hint', text: 'Kein QR-Code und kein Code nötig – du trittst der aktuellen Mission bei. Dein Benutzername ist dein Callsign.' }),
-      accErr,
-      h('p', { class: 'acc-or', text: 'ODER ALS GAST MIT MISSION CODE' }));
-  } else {
-    accountPanel = h('p', { class: 'acc-hint' }, 'Mit Login ohne Code beitreten: ', h('a', { href: './login.html?return=quiz.html' }, 'OPERATOR LOGIN ▸'));
-  }
+  const joinAcc = h('button', { type: 'button', class: 'btn btn--primary btn--block btn--xl', id: 'join-account' }, `ALS ${acc.username} BEITRETEN`);
+  const accErr = h('p', { id: 'join-error', class: 'form-error', role: 'alert', text: error });
+  joinAcc.addEventListener('click', async () => {
+    joinAcc.disabled = true;
+    accErr.textContent = '';
+    try {
+      const code = onlyDigits(new URLSearchParams(window.location.search).get('game')) || null;
+      const res = await rpc('join_game_account', { p_token: acc.token, p_code: code });
+      const s = { code: res.code, gameId: res.game_id, playerId: res.player_id, token: res.player_token, callsign: res.callsign };
+      storage.set(sessionKey(s.code), s);
+      storage.set(LAST_KEY, s.code);
+      sfx.lock();
+      startSession(s);
+    } catch (e) {
+      if (e.code === 'ACCOUNT_UNAUTHORIZED') { clearAccount(); window.location.replace('./login.html?return=quiz.html'); return; }
+      accErr.textContent = e.code === 'NO_ACTIVE_MISSION' ? 'KEINE OFFENE MISSION – WARTE AUF DEN COMMANDER' : errorText(e.code);
+      joinAcc.disabled = false;
+    }
+  });
 
   mount(app,
     h('section', { class: 'card card--briefing' },
@@ -192,8 +133,11 @@ function renderJoin({ code = '', callsign = '', error = '' } = {}) {
       h('p', { class: 'subtitle', text: TEXT.subtitle }),
       h('div', { class: 'stripes', 'aria-hidden': 'true' }),
       h('p', { class: 'meta', text: `${TEXT.eventDate} // ${TEXT.eventTime} UHR // COMMANDER ${TEXT.commander}` }),
-      accountPanel,
-      form,
+      h('div', { class: 'acc-join' },
+        h('p', { class: 'eyebrow', text: `EINGELOGGT ALS ${acc.username}` }),
+        joinAcc,
+        h('p', { class: 'field__hint', text: 'Du trittst der aktuellen Mission bei – dein Benutzername ist dein Callsign.' }),
+        accErr),
       coordLine('BRIEFING ROOM')));
   announce('Mission beitreten');
 }

@@ -88,10 +88,15 @@ await anon(db, 'ops_set_checkin', { p_token: HOST2, p_account_id: ids.RushB, p_c
 ok((await anon(db, 'site_status', {})).data.open === true, 'release stays after someone checks out');
 await anon(db, 'ops_set_hold', { p_token: HOST2, p_enabled: true });
 ok((await anon(db, 'site_status', {})).data.open === false, 're-enabling hold locks again');
-// harter Hold: niemand ausser dem Commander kann etwas tun
-errIs(await anon(db, 'account_register', { p_username: 'NewGuy', p_password: 'abcd1' }), 'SITE_ON_HOLD', 'hold: no registration');
+// Hold: Login/Registrierung (Start-Bildschirm) geht, alles andere ist gesperrt
+r = await anon(db, 'account_register', { p_username: 'NewGuy', p_password: 'abcd1' });
+ok(r.data && r.data.ok, 'hold: registration on the start screen works', r);
+ok((await anon(db, 'site_status', {})).data.operators.some((o) => o.username === 'NewGuy' && !o.checked_in), 'hold: new account appears as EN ROUTE');
+await anon(db, 'ops_delete_account', { p_token: HOST2, p_account_id: (await anon(db, 'ops_state', { p_token: HOST2 })).data.accounts.find((a) => a.username === 'NewGuy').id });
 r = await anon(db, 'account_login', { p_username: 'RushB', p_password: 'neu1234' });
-ok(r.data.ok === false && r.data.error === 'SITE_ON_HOLD', 'hold: players cannot log in', r.data);
+ok(r.data.ok === true, 'hold: players can log in (start screen)', r.data);
+const RB_HOLD = r.data.token;
+errIs(await anon(db, 'counter_submit_stats', { p_token: RB_HOLD, p_match_id: 1, p_kills: 1, p_deaths: 1, p_assists: 1, p_hs_pct: 1, p_adr: 1, p_mvps: 0 }), 'SITE_ON_HOLD', 'hold: stats blocked');
 r = await anon(db, 'account_login', { p_username: 'havoc', p_password: 'Commander-Test-2026' });
 ok(r.data.ok === true, 'hold: commander can log in');
 const holdGame = (await anon(db, 'host_create_game', { p_token: HOST2 })).data.game;
@@ -180,7 +185,7 @@ ok((await anon(db, 'accounts_public', {})).data.length === 3, 'account removed f
   const st = (await anon2(fresh, 'site_status', {})).data;
   const reg = await anon2(fresh, 'account_register', { p_username: 'Early', p_password: 'abcd1' });
   const cmd = await anon2(fresh, 'account_login', { p_username: 'havoc', p_password: 'Commander-Test-2026' });
-  const ok2 = st.hold_enabled === true && st.open === false && reg.error?.message === 'SITE_ON_HOLD' && cmd.data.ok;
+  const ok2 = st.hold_enabled === true && st.open === false && reg.data?.ok === true && cmd.data.ok;
   console.log(ok2 ? '' : 'FAIL: fresh install: hold active by default', JSON.stringify({ st, reg, cmd: cmd.data }));
   if (!ok2) process.exit(1);
 }

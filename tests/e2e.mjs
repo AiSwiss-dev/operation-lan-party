@@ -4,8 +4,6 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
-import jsQR from 'jsqr';
-import { PNG } from 'pngjs';
 import { createDb, rpcAs } from './pg-harness.mjs';
 
 import { fileURLToPath } from 'node:url';
@@ -174,60 +172,52 @@ try {
   await host.waitForSelector('.mission-code');
   const CODE = (await host.innerText('.mission-code')).replace(/\s/g, '');
   ok(/^\d{6}$/.test(CODE), 'mission code shown ' + CODE);
-  const joinText = await host.innerText('.join-url');
-  ok(joinText.endsWith(`/operation-lan-party/quiz.html?game=${CODE}`), 'join url has subpath', joinText);
-
-  // QR decode
-  const qrPng = PNG.sync.read(await host.locator('.qr').screenshot());
-  const decoded = jsQR(new Uint8ClampedArray(qrPng.data), qrPng.width, qrPng.height);
-  const JOIN_URL = decoded && decoded.data;
-  ok(JOIN_URL === `${SITE}quiz.html?game=${CODE}`, 'QR decodes to player url', JOIN_URL);
+  ok((await host.$$('.qr')).length === 0 && (await host.innerText('.join-steps')).includes('BEITRETEN'), 'no QR code, join instructions instead');
   await host.screenshot({ path: `${OUT}/host-lobby-empty.png` });
+
+  // Operator-Accounts anlegen und eingeloggt öffnen
+  async function accountPage(name, viewport) {
+    const reg = await serial(() => rpcAs(db, 'anon', 'account_register', { p_username: name, p_password: 'pass1234' }));
+    const page = await newPage(name, viewport);
+    await page.context().addInitScript(([t, u]) => { if (!localStorage.getItem('olp.account')) localStorage.setItem('olp.account', JSON.stringify({ token: t, username: u, commander: false })); }, [reg.data.token, reg.data.username]);
+    return page;
+  }
+  async function joinViaAccount(page) {
+    await page.goto(SITE + 'quiz.html');
+    await page.waitForSelector('#join-account');
+    await page.click('#join-account');
+    await waitH1(page, 'WAITING FOR COMMANDER');
+  }
 
   // ===== Players join =====
   console.log('PLAYERS');
   const NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett'];
   const players = [];
   for (const n of NAMES) {
-    const p = await newPage(n);
-    await p.goto(JOIN_URL);
-    await p.waitForSelector('#callsign');
+    const p = await accountPage(n);
     if (n === 'Alpha') {
-      ok((await p.inputValue('#mission-code')) === CODE, 'code prefilled from ?game=');
+      await p.goto(SITE + 'quiz.html');
+      await p.waitForSelector('#join-account');
+      ok((await p.$$('#callsign, #mission-code')).length === 0, 'quiz: no guest form / no code field');
       ok(await noHScroll(p), 'join screen no horizontal scroll (390)');
       await p.screenshot({ path: `${OUT}/player-join-390.png`, fullPage: true });
     }
-    await p.fill('#callsign', n);
-    await p.click('form button[type=submit]');
-    await waitH1(p, 'WAITING FOR COMMANDER');
+    await joinViaAccount(p);
     players.push(p);
   }
   ok(true, '10 players in lobby');
 
-  // edge cases on an extra page
-  const extra = await newPage('extra', { width: 320, height: 640 });
-  await extra.goto(JOIN_URL);
-  await extra.fill('#callsign', 'alpha');
-  await extra.click('form button[type=submit]');
-  await extra.waitForSelector('#join-error:text("CALLSIGN BEREITS VERGEBEN")');
-  ok(true, 'duplicate callsign (case-insensitive) rejected');
-  await extra.fill('#callsign', '<b>x</b>');
-  await extra.click('form button[type=submit]');
-  ok((await extra.innerText('#join-error')).includes('UNGÜLTIGE ZEICHEN'), 'html callsign rejected');
-  await extra.fill('#callsign', 'x');
-  await extra.click('form button[type=submit]');
-  ok((await extra.innerText('#join-error')).includes('2–24'), 'short callsign rejected');
-  await extra.fill('#mission-code', '000001');
-  await extra.fill('#callsign', 'Ghost');
-  await extra.click('form button[type=submit]');
-  await extra.waitForSelector('#join-error:text("MISSION CODE UNGÜLTIG")');
-  ok(true, 'unknown mission rejected');
-  ok(await noHScroll(extra), 'join screen no horizontal scroll (320)');
-  await extra.screenshot({ path: `${OUT}/player-join-320-error.png`, fullPage: true });
-  await extra.fill('#mission-code', CODE);
-  await extra.fill('#callsign', `O'Neil "&" Ä`);
-  await extra.click('form button[type=submit]');
-  await waitH1(extra, 'WAITING FOR COMMANDER');
+  // ohne Login → Login-Seite
+  const anon1 = await newPage('nologin', { width: 320, height: 640 });
+  await anon1.goto(SITE + 'quiz.html');
+  await anon1.waitForURL(/login\.html\?return=quiz\.html$/, { timeout: 10000 });
+  ok(true, 'quiz without login redirects to login');
+  ok(await noHScroll(anon1), 'login screen no horizontal scroll (320)');
+  await anon1.context().close();
+
+  // Sonderzeichen im Namen werden als Text dargestellt
+  const extra = await accountPage(`O'Neil "&" Ä`, { width: 320, height: 640 });
+  await joinViaAccount(extra);
   ok((await extra.innerText('.callsign')) === `O'Neil "&" Ä`, 'special chars rendered as text');
 
   // host sees all (polling fallback)
@@ -239,6 +229,7 @@ try {
   await host.waitForFunction(() => document.querySelectorAll('.chips--lobby .chip').length === 10, null, { timeout: 10000 });
   ok(true, 'host removed player');
   await extra.waitForSelector('#join-error:text("OPERATOR NICHT GEFUNDEN")', { timeout: 15000 });
+  ok(await extra.isVisible('#join-account'), 'kicked player can rejoin with one tap');
   ok(true, 'kicked player back at join with message');
   await players[0].waitForFunction(() => document.querySelectorAll('.roster__item').length === 10, null, { timeout: 15000 });
   ok(true, 'player lobby list updates');
@@ -246,17 +237,17 @@ try {
     await Promise.all([host, ...players].map((p) => p.waitForSelector('#link-led[data-state="live"]', { timeout: 10000 })));
     ok(true, 'realtime: all 11 devices show LIVE');
     // a join must reach the others via realtime (fallback poll would be 8 s in live mode)
-    const probe = await newPage('probe');
-    await probe.goto(JOIN_URL);
-    await probe.fill('#callsign', 'RealtimeProbe');
+    const probe = await accountPage('RealtimeProbe');
+    await probe.goto(SITE + 'quiz.html');
+    await probe.waitForSelector('#join-account');
     const t0 = Date.now();
-    await probe.click('form button[type=submit]');
+    await probe.click('#join-account');
     await players[0].waitForFunction(() => document.querySelectorAll('.roster__item').length === 11, null, { timeout: 7000 });
     const dt = Date.now() - t0;
     ok(dt < 2000, `realtime: join visible on other phone after ${dt} ms`);
     await probe.click('button:text("MISSION VERLASSEN")');
     await probe.click('dialog .btn--danger');
-    await probe.waitForSelector('#callsign');
+    await probe.waitForSelector('#join-account');
     await players[0].waitForFunction(() => document.querySelectorAll('.roster__item').length === 10, null, { timeout: 7000 });
     ok(true, 'realtime: leaving lobby propagates (DELETE event)');
     await probe.context().close();
@@ -299,12 +290,11 @@ try {
   ok(g.status === 'question' && g.current_question === 1, 'double-click start -> exactly question 1', g);
 
   // late join
-  const late = await newPage('late');
-  await late.goto(JOIN_URL);
-  await late.fill('#callsign', 'LateGuy');
-  await late.click('form button[type=submit]');
-  await late.waitForSelector('#join-error:text("MISSION BEREITS GESTARTET")');
-  ok(true, 'late join blocked');
+  const late = await accountPage('LateGuy');
+  await late.goto(SITE + 'quiz.html');
+  await late.click('#join-account');
+  await late.waitForSelector('#join-error:text("KEINE OFFENE MISSION")');
+  ok(true, 'late join blocked (no open lobby)');
   await late.context().close();
   await extra.context().close();
 
@@ -372,7 +362,7 @@ try {
       ok(true, 'reload after answer stays ANSWER LOCKED');
       // second tab of same player
       const tab2 = await players[2].context().newPage();
-      await tab2.goto(JOIN_URL);
+      await tab2.goto(SITE + 'quiz.html');
       await waitH1(tab2, 'ANSWER LOCKED');
       ok(true, 'second tab shows same locked state');
       await tab2.close();
@@ -506,9 +496,9 @@ try {
   console.log('RESPONSIVE');
   for (const w of [320, 375, 390, 430, 768]) {
     const p = await newPage('resp' + w, { width: w, height: 760 });
-    await p.goto(SITE + '?game=123456');
-    await p.waitForSelector('#callsign');
-    ok(await noHScroll(p), `join ${w}px no horizontal scroll`);
+    await p.goto(SITE + 'login.html');
+    await p.waitForSelector('#acc-user');
+    ok(await noHScroll(p), `login ${w}px no horizontal scroll`);
     await p.screenshot({ path: `${OUT}/resp-join-${w}.png`, fullPage: true });
     await p.context().close();
   }

@@ -9,7 +9,6 @@ import { createSync } from './sync.js';
 import { initAudio, sfx, bindSoundToggle, updateSoundscape, tracks, bombTrackActive, updateUnlockHint } from './audio.js';
 import { setNetBanner, setLinkLed, renderConfigError, createCountdown, progressBar, coordLine, stamp } from './ui.js';
 import { TEXT, phaseInfo, rankFor, SOUND_SETUP } from './questions.js';
-import { createQrSvg, playerUrl, isLocalhost } from './qr.js';
 
 const app = document.getElementById('app');
 const srStatus = document.getElementById('sr-status');
@@ -28,7 +27,6 @@ let renderSignature = '';
 let countdown = null;
 let countdownQ = null;
 let controls = {};
-let qrCache = { code: null, node: null };
 const played = { start: null, tick: null, expired: null, reveal: null, final: false, answers: 0 };
 
 // ---------------------------------------------------------------------
@@ -419,7 +417,7 @@ function stageLobby(g) {
       }))
     : h('div', { class: 'empty' },
         h('div', { class: 'radar', 'aria-hidden': 'true' }),
-        h('p', { class: 'lead', text: 'Warte auf Operatoren – QR-Code scannen oder Mission Code eingeben.' }));
+        h('p', { class: 'lead', text: 'Warte auf Operatoren – einloggen, QUIZ antippen, ALS [NAME] BEITRETEN.' }));
   return h('div', { class: 'stage__inner' },
     stageHeader(g, 'OPERATORS DEPLOYED'),
     h('p', { class: 'big-count' }, h('b', { text: String(players.length) }), players.length === 1 ? ' OPERATOR BEREIT' : ' OPERATOREN BEREIT'),
@@ -543,15 +541,7 @@ function stageAborted(g) {
 // ---------------------------------------------------------------------
 // Seitenleiste: Code, QR, Status, Rangliste
 // ---------------------------------------------------------------------
-function qrNode(code) {
-  if (qrCache.code !== code) {
-    qrCache = { code, node: createQrSvg(playerUrl(code), { label: `QR-Code zum Beitreten der Mission ${code}` }) };
-  }
-  return qrCache.node;
-}
-
 function buildSide(g) {
-  const url = playerUrl(g.code);
   const lobby = g.status === 'lobby';
   const parts = [];
 
@@ -566,9 +556,10 @@ function buildSide(g) {
   parts.push(h('div', { class: `panel panel--code${lobby ? ' is-big' : ''}` },
     h('p', { class: 'panel__label', text: 'MISSION CODE' }),
     h('p', { class: 'mission-code', text: g.code.replace(/(\d{3})(\d{3})/, '$1 $2'), 'aria-label': `Mission Code ${g.code.split('').join(' ')}` }),
-    lobby ? h('div', { class: 'qr-wrap' }, qrNode(g.code)) : null,
-    lobby ? h('p', { class: 'join-url', text: url.replace(/^https?:\/\//, '') }) : null,
-    lobby && isLocalhost() ? h('p', { class: 'warn', text: 'ACHTUNG: localhost – Handys können diese Adresse nicht öffnen. host.html über die IP dieses PCs oder GitHub Pages öffnen.' }) : null,
+    lobby ? h('ol', { class: 'join-steps', 'aria-label': 'So treten die Operatoren bei' },
+      h('li', {}, h('b', { text: '1' }), 'Auf der Seite einloggen'),
+      h('li', {}, h('b', { text: '2' }), 'QUIZ antippen'),
+      h('li', {}, h('b', { text: '3' }), 'ALS [NAME] BEITRETEN')) : null,
     !lobby && g.status !== 'aborted' ? h('p', { class: 'muted small', text: 'Beitritt gesperrt – Mission läuft' }) : null));
 
   parts.push(h('div', { class: 'panel' },

@@ -25,7 +25,7 @@ function build() {
 }
 
 // Commander = gültige Commander-Sitzung ODER eingeloggt mit dem Commander-Account
-async function commanderSession() {
+export async function commanderSession() {
   const saved = storage.get('olp.host');
   if (saved && saved.token) {
     try {
@@ -131,8 +131,8 @@ function render(s) {
   const segs = Math.max(1, s.total);
   const objectives = [
     ['01', 'QUIZ', 'CS2 EINSATZPRÜFUNG'],
-    ['02', 'GAME COUNTER', '5-MAN SQUAD // CS-STATS'],
-    ['03', 'BRACKET', '1v1 TACTICAL DUEL'],
+    ['02', 'BRACKET', '1v1 TACTICAL DUEL'],
+    ['03', 'GAME COUNTER', '5-MAN SQUAD // CS-STATS'],
   ];
   mount(overlay,
     h('div', { class: 'hold__scan', 'aria-hidden': 'true' }),
