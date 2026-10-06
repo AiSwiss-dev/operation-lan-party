@@ -24,6 +24,7 @@ let sync = null;
 let unwatch = null;
 let busy = false;
 let stageKey = '';
+let renderSignature = '';
 let countdown = null;
 let countdownQ = null;
 let controls = {};
@@ -341,6 +342,15 @@ function render() {
   const stage = document.getElementById('stage');
   const side = document.getElementById('side');
   if (!stage || !side) return;
+  // Nur neu aufbauen, wenn sich wirklich etwas geändert hat – sonst würden
+  // z. B. Podium und Rangliste bei jedem Live-Update neu einfliegen.
+  const signature = JSON.stringify({ ...st, game: { ...g, server_now_ms: 0 }, changed: undefined });
+  if (!entering && signature === renderSignature) {
+    updateControls();
+    tick();
+    return;
+  }
+  renderSignature = signature;
   const builders = { lobby: stageLobby, question: stageQuestion, results: stageResults, phase_break: stagePhaseBreak, finished: stageFinished, aborted: stageAborted };
   mount(stage, (builders[g.status] || stageLobby)(g, now));
   stage.classList.toggle('is-entering', entering);

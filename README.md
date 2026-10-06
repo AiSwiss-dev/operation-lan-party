@@ -119,12 +119,12 @@ Du brauchst: einen **GitHub**-Account, einen **Supabase**-Account (beide kostenl
 2. **New query** (bzw. „+“).
 3. Die Datei `supabase/schema.sql` mit einem Texteditor öffnen, **alles** kopieren und in den SQL Editor einfügen.
 4. Unten rechts **Run** klicken.
-5. Ganz unten erscheint eine Ergebniszeile: `fragen = 20`, `phase_1 = 10`, `phase_2 = 10`, `commander_passwort_gesetzt = 0`, `counter_bereit = 1`, `bracket_bereit = 1`.
+5. Ganz unten erscheint eine Ergebniszeile: `fragen = 20`, `phase_1 = 10`, `phase_2 = 10`, `commander_passwort_gesetzt = 0`, `counter_bereit = 1`, `turnier_bereit = 1`.
    → Das ist richtig. Das Passwort kommt im nächsten Schritt.
 
 > Das Script darf jederzeit erneut ausgeführt werden (z. B. nach dem Ändern von Fragen). Es löscht keine Spieldaten.
 
-**Kontrolle:** Links auf **Table Editor** → es sollten die Tabellen `games`, `players`, `questions`, `answers`, `player_tokens`, `host_sessions`, `commander_config`, `login_attempts`, `game_rules` sowie für Counter/Bracket `counter_team`, `counter_matches`, `bracket` sichtbar sein. Bei allen steht „RLS enabled“ (Row Level Security aktiv) – das ist gewollt.
+**Kontrolle:** Links auf **Table Editor** → es sollten die Tabellen `games`, `players`, `questions`, `answers`, `player_tokens`, `host_sessions`, `commander_config`, `login_attempts`, `game_rules` sowie für Counter/Turnier `counter_team`, `counter_matches`, `tournament` sichtbar sein. Bei allen steht „RLS enabled“ (Row Level Security aktiv) – das ist gewollt.
 
 ### Schritt 3 – Commander-Passwort setzen
 
@@ -138,7 +138,7 @@ Antwort: `Commander-Passwort gesetzt. …` – fertig. Das Passwort wird nur ver
 
 ### Schritt 4 – Realtime prüfen
 
-`schema.sql` schaltet Realtime für die Tabellen `games`, `players`, `counter_team`, `counter_matches` und `bracket` automatisch ein. Kontrolle:
+`schema.sql` schaltet Realtime für die Tabellen `games`, `players`, `counter_team`, `counter_matches` und `tournament` automatisch ein. Kontrolle:
 
 * Links **Database** → **Publications** → Zeile `supabase_realtime` → dort müssen `games` und `players` aktiviert sein.
 * Alternativ im **Table Editor** bei `games` bzw. `players`: Schalter/Hinweis „Realtime on“.
@@ -298,21 +298,19 @@ Beide Bereiche sind unabhängig vom Quiz, laufen aber über dieselbe Supabase-Da
 * Anzeige: WINS / LOSSES / TIES, Winrate, aktuelle Serie, Form der letzten 10 Matches, Bilanz pro Map, Match-Log.
 * Falsch eingetragen? Im Match-Log mit **×** löschen. **BILANZ ZURÜCKSETZEN** löscht alle Matches (Team bleibt).
 
-**03 BRACKET – 1v1, 5 Operatoren, Single Elimination**
+**03 BRACKET – 1v1-Turnier für 4–8 Operatoren (Standard: 5)**
 
-| Duel | Runde | Wer |
-|---|---|---|
-| 01 | Vorrunde (PLAY-IN) | zwei ausgeloste Operatoren |
-| 02 | Halbfinale | Freilos + Sieger Duel 01 |
-| 03 | Halbfinale | zwei Operatoren mit Freilos |
-| 04 | Finale | Sieger Duel 02 + Sieger Duel 03 → **CHAMPION / TOP OPERATOR** |
+1. **Setup:** Commander trägt die Operatoren vorab ein → **SPIELER SPEICHERN** (alle sehen „OPERATORS REGISTERED“).
+2. **AUSLOSEN & STARTEN:** Der Server lost zufällig die **Qualifikation**: Jeder spielt **genau 2 Duelle** (Ring: A–B, B–C, …, E–A; bei 5 Spielern 5 Duelle). Die Reihenfolge ist so gewählt, dass niemand zweimal direkt hintereinander spielt.
+3. **Rangliste Quali:** Sieg 3 Punkte, Unentschieden 1, Niederlage 0 – bei Gleichstand zählt die Rundendifferenz, dann die gewonnenen Runden. **Top 4 → Halbfinale**, ab Platz 5 ausgeschieden.
+4. **Playoffs:** HF 1 = Platz 1 vs Platz 4, HF 2 = Platz 2 vs Platz 3 → **FINALE** → **CHAMPION / TOP OPERATOR**.
+5. **Lower Bracket:** Die Verlierer der Halbfinals spielen das **SPIEL UM PLATZ 3**. Unten rechts steht der **Endstand** (1.–4. aus den Playoffs, ab 5. aus der Quali).
 
-* Die 5 Namen direkt in Duel 01–03 eintragen – oder eintragen und **AUSLOSEN** (zufällige Verteilung).
-* Scores eintragen: der höhere Score gewinnt und rückt automatisch weiter; Gleichstand = noch kein Sieger. Alles wird sofort gespeichert („GESPEICHERT ✓“).
-* **RESULTATE LÖSCHEN** (Namen bleiben) / **ALLES LEEREN**.
-* Auf TV/Beamer (ab ca. 1000 px Breite) erscheint das Bracket wie auf der Vorlage mit Verbindungslinien, auf dem Handy untereinander.
+* Scores einfach in die Felder tippen – wird sofort gespeichert; der höhere Score gewinnt, Ranglisten und Playoffs aktualisieren sich automatisch. Playoff-Felder sind gesperrt, bis die Gegner feststehen.
+* **NEU AUSLOSEN** (neue Paarungen, Resultate weg), **RESULTATE LÖSCHEN** (Paarungen bleiben), **SPIELER ÄNDERN** (zurück zum Setup).
+* Auf TV/Beamer passt alles auf einen Bildschirm (1920×1080), auf dem Handy untereinander.
 
-> Neu dazugekommen? Dann `supabase/schema.sql` einmal **erneut komplett** im SQL Editor ausführen – das legt die Tabellen für Counter und Bracket an. Quiz-Daten und Passwort bleiben erhalten.
+> Neu dazugekommen? Dann im SQL Editor einmal `supabase/update-counter-bracket.sql` ausführen (oder `schema.sql` erneut komplett) – das legt die Tabellen für Counter und Turnier an. Quiz-Daten und Passwort bleiben erhalten.
 
 ---
 
@@ -507,7 +505,7 @@ Mindestens **ein paar Tage vorher** (kostenlose Supabase-Projekte pausieren nach
 
 ### Getestet
 
-* Game Counter + Bracket: **42 Datenbank-Prüfungen** (Rechte, Validierung, Score→Ergebnis, Reset) und **39 Browser-Prüfungen** (Startseite, Commander + Live-Zuschauer, automatisches Weiterrücken, Auslosen, TV-Darstellung 1920×1080 ohne Scrollen).
+* Game Counter + Bracket: **55 Datenbank-Prüfungen** (Rechte, Validierung, Score→Ergebnis, Auslosung für 4–8 Spieler: jeder genau 2×, keine Doppel-Paarung, niemand zweimal hintereinander) und **42 Browser-Prüfungen** (Startseite, Commander + Live-Zuschauer, Quali-Rangliste, Halbfinale 1–4/2–3, Platz 3, Endstand, TV-Darstellung 1920×1080 ohne Scrollen).
 * `schema.sql` mit echtem PostgreSQL (PGlite) als `anon`-Rolle: **154 Prüfungen** – RLS, Rechte, Deadline + Kulanz, Doppelantwort, Punkte (175 bei 15 s, max. 195), Phasenwechsel, Finale, Brute-Force-Sperre, Manipulationsversuche, mehrfaches Ausführen des Scripts.
 * Kompletter Ablauf im echten Browser (Chrome headless), App unter dem Unterpfad `/operation-lan-party/` wie bei GitHub Pages, Server-Funktionen aus dem echten `schema.sql`: Host + 10 Spieler, alle 20 Fragen, QR-Code-Dekodierung, doppelter/HTML-Callsign, Reload, zweiter Tab, direkter API-Doppel-Submit, Doppelklicks, spätes Beitreten, Kicken, Verbindungsabbruch + Reconnect, Host-Reload, Zwischenranking, Finale, Tie-Breaker, CSV-Export, Reset; Darstellung bei 320/375/390/430/768 px sowie 1280×720, 1600×900, 1920×1080. **105 Prüfungen mit nachgebildetem Supabase-Realtime** (Event-Laufzeit ~0,2 s) und **100 Prüfungen mit blockiertem Realtime** (reiner Fallback).
 * Fehlerseiten bei fehlender/falscher Konfiguration inkl. Secret-Key-Erkennung.

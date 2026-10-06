@@ -15,7 +15,7 @@ export const OUT = fileURLToPath(new URL('./screenshots', import.meta.url));
 fs.mkdirSync(OUT, { recursive: true });
 const FAKE_ANON = 'eyJhbGciOiJIUzI1NiJ9.' + Buffer.from(JSON.stringify({ role: 'anon', iss: 'test' })).toString('base64url') + '.c2ln';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webm': 'audio/webm', '.m4a': 'audio/mp4' };
-const RT_TABLES = ['games', 'players', 'counter_team', 'counter_matches', 'bracket'];
+const RT_TABLES = ['games', 'players', 'counter_team', 'counter_matches', 'tournament'];
 
 export async function startBackend({ port = 8770, realtime = true } = {}) {
   const db = await createDb();

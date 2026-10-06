@@ -467,6 +467,11 @@ try {
   const sums = await sqlRows(`select p.score, (select coalesce(sum(points),0)::int from answers a where a.player_id = p.id) s from players p join games g on g.id = p.game_id where g.code = $1`, [CODE]);
   ok(sums.every((r) => r.score === r.s), 'every score == sum of its answer points');
   await host.screenshot({ path: `${OUT}/host-final.png` });
+  const podiumEl = await host.$('.podium');
+  await players[2].reload();               // erzeugt Live-Updates (last_seen)
+  await waitH1(players[2], 'MISSION ACCOMPLISHED');
+  await host.waitForTimeout(3000);
+  ok(await podiumEl.evaluate((n) => n.isConnected), 'host final: podium/leaderboard not rebuilt on live updates');
   ok(await host.evaluate(() => { const s = document.getElementById('stage'); return s.scrollHeight <= s.clientHeight + 1; }), 'host final fits without scrolling');
   const pos1 = await host.locator('.panel--final tbody tr.is-top-1').count();
   ok(pos1 === 1, 'tie-breaker gives exactly one #1', pos1);
