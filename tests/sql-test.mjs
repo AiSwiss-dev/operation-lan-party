@@ -249,7 +249,7 @@ ok(r.data.ok === false && r.data.error === 'LOGIN_LOCKED', 'brute force lock', r
 
 // ---- Realtime publication ----------------------------------------------------------
 const pub = await su(`select tablename from pg_publication_tables where pubname='supabase_realtime' order by 1`);
-ok(pub.map((x) => x.tablename).join(',') === 'counter_matches,counter_team,games,players,tournament', 'realtime publication', pub);
+ok(pub.map((x) => x.tablename).join(',') === 'counter_matches,counter_stats,counter_team,games,players,site_state,tournament', 'realtime publication', pub);
 
 console.log(`\nSQL TESTS: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -17,6 +17,8 @@ import { createSync } from './sync.js';
 import { setNetBanner, setLinkLed, renderConfigError } from './ui.js';
 import { checkCommander, commanderLogin, commanderLogout, getToken, clearToken } from './commander.js';
 import { TEXT } from './questions.js';
+import { isMe, norm, startHeartbeat } from './account.js';
+import { initGate } from './gate.js';
 
 const app = document.getElementById('app');
 const cmdArea = document.getElementById('cmd-area');
@@ -45,6 +47,7 @@ let structureKey = '';
 let viewMode = 'bracket';     // 'bracket' | 'finish'
 let finishKey = '';          // gemerkter Abschluss → automatisch einmal zur Ergebnis-Seite
 let finishSig = '';
+let accounts = [];
 const el = { ko: {} };
 
 // ---------------------------------------------------------------------
@@ -114,7 +117,11 @@ async function init() {
     renderConfigError(app, configStatus);
     return;
   }
+  startHeartbeat();
+  initGate();
   buildPage();
+  loadAccounts();
+  setInterval(loadAccounts, 20000);
   commander = await checkCommander();
   editing = commander;
   renderToolbar();
@@ -197,11 +204,17 @@ function buildPage() {
   el.setupCancel = h('button', { type: 'button', class: 'btn btn--ghost' }, 'ABBRECHEN');
   el.setupCancel.addEventListener('click', () => { setupOpen = false; fillSetupInputs(); render(); });
   el.setupCount = h('span', { class: 'br-save' });
-  for (const input of el.setupInputs) input.addEventListener('input', updateSetupCount);
+  for (const input of el.setupInputs) input.addEventListener('input', () => { updateSetupCount(); renderAccChips(); });
+  el.accChips = h('div', { class: 'tn-acc' });
+  const takeChecked = h('button', { type: 'button', class: 'btn btn--ghost' }, 'EINGECHECKTE ÜBERNEHMEN');
+  takeChecked.addEventListener('click', takeCheckedIn);
   el.setup = h('section', { class: 'br-tools tn-setup', hidden: true, 'aria-label': 'Spieler eintragen' },
     h('p', { class: 'eyebrow', text: 'COMMANDER // SCHRITT 1: OPERATOREN EINTRAGEN' }),
     h('p', { class: 'field__hint', text: '4–8 Operatoren vorab eintragen. AUSLOSEN & STARTEN verteilt alle zufällig: In der Qualifikation spielt jeder genau 2 Duelle. Die Top 4 kommen ins Halbfinale, die Verlierer der Halbfinals spielen um Platz 3.' }),
     h('div', { class: 'tn-setup__grid' }, el.setupInputs),
+    h('p', { class: 'field__label', text: 'REGISTRIERTE OPERATOREN – ANTIPPEN ZUM HINZUFÜGEN' }),
+    el.accChips,
+    h('div', { class: 'br-tools__row' }, takeChecked),
     h('div', { class: 'br-tools__row' }, savePlayers, drawStart, el.setupCancel, el.setupCount));
 
   // Werkzeuge während des Turniers (Commander)
@@ -345,6 +358,7 @@ function render() {
   }
   el.wait.querySelector('.tn-wait__text').textContent = n >= 4 ? 'WARTE AUF AUSLOSUNG …' : 'WARTE AUF OPERATOREN …';
 
+  if (showSetup) renderAccChips();
   if (!drawn) {
     el.status.textContent = `STATUS: SETUP // ${TEXT.eventDate}`;
     updateSetupCount();
@@ -366,6 +380,8 @@ function render() {
     r.nb.classList.toggle('is-winner', decided && m.sb > m.sa);
     r.na.classList.toggle('is-loser', decided && m.sa < m.sb);
     r.nb.classList.toggle('is-loser', decided && m.sb < m.sa);
+    r.na.classList.toggle('is-me', isMe(m.a));
+    r.nb.classList.toggle('is-me', isMe(m.b));
   });
   el.qprogress.textContent = `${c.scored}/${c.matches.length}`;
 
@@ -375,7 +391,7 @@ function render() {
       h('th', { scope: 'col', text: '#' }), h('th', { scope: 'col', text: 'CALLSIGN' }),
       h('th', { scope: 'col', class: 'num tn-opt', text: 'SP' }), h('th', { scope: 'col', class: 'num', text: 'S-U-N' }),
       h('th', { scope: 'col', class: 'num', text: '+/-' }), h('th', { scope: 'col', class: 'num', text: 'PKT' }))),
-    h('tbody', {}, c.table.map((r) => h('tr', { class: r.pos <= 4 ? `is-top is-top-${r.pos} tn-qualified` : 'tn-out' },
+    h('tbody', {}, c.table.map((r) => h('tr', { class: `${r.pos <= 4 ? `is-top is-top-${r.pos} tn-qualified` : 'tn-out'}${isMe(r.name) ? ' is-me' : ''}` },
       h('td', { class: 'pos', text: String(r.pos) }),
       h('td', { class: 'name' }, r.name, r.pos > 4 && c.complete ? h('span', { class: 'tn-tag', text: ' OUT' }) : null),
       h('td', { class: 'num tn-opt', text: String(r.played) }),
@@ -402,6 +418,7 @@ function render() {
       slot.input.disabled = !(res.a && res.b);
       slot.row.classList.toggle('is-winner', res.side === side);
       slot.row.classList.toggle('is-loser', res.side !== null && res.side !== side);
+      slot.row.classList.toggle('is-me', isMe(name));
     }
     parts.card.classList.toggle('is-decided', !!res.winner);
     parts.card.classList.toggle('is-ready', !!(res.a && res.b) && !res.winner);
@@ -410,7 +427,7 @@ function render() {
   el.champion.classList.toggle('is-crowned', !!c.final.winner);
 
   const labels = ['CHAMPION', 'FINALIST', 'PLATZ 3', 'PLATZ 4'];
-  mount(el.standings, c.placements.slice(0, Math.max(4, n)).map((name, i) => h('li', { class: `tn-standings__item${name ? '' : ' is-open'}${i === 0 && name ? ' is-champ' : ''}` },
+  mount(el.standings, c.placements.slice(0, Math.max(4, n)).map((name, i) => h('li', { class: `tn-standings__item${name ? '' : ' is-open'}${i === 0 && name ? ' is-champ' : ''}${isMe(name) ? ' is-me' : ''}` },
     h('span', { class: 'tn-standings__pos', text: `${i + 1}.` }),
     h('span', { class: 'tn-standings__name', text: name || '—' }),
     h('span', { class: 'tn-standings__tag', text: labels[i] || 'QUALI' }))));
@@ -470,7 +487,7 @@ function renderFinish(c) {
         h('th', { scope: 'col', text: 'ERGEBNIS' }), h('th', { scope: 'col', class: 'num', text: 'S-U-N', title: 'Duelle gesamt: Siege-Unentschieden-Niederlagen' }),
         h('th', { scope: 'col', class: 'num tn-opt', text: 'RUNDEN' }), h('th', { scope: 'col', class: 'num tn-opt', text: '+/-' }),
         h('th', { scope: 'col', class: 'num tn-opt', text: 'QUALI' }))),
-      h('tbody', {}, rows.map((r) => h('tr', { class: r.pos <= 3 ? `is-top is-top-${r.pos}` : '' },
+      h('tbody', {}, rows.map((r) => h('tr', { class: `${r.pos <= 3 ? `is-top is-top-${r.pos}` : ''}${isMe(r.name) ? ' is-me' : ''}` },
         h('td', { class: 'pos', text: `#${r.pos}` }),
         h('td', { class: 'name', text: r.name }),
         h('td', { class: 'tn-result', text: result[r.pos - 1] || 'OUT (QUALI)' }),
@@ -549,6 +566,45 @@ function renderToolbar() {
   document.body.classList.toggle('is-editing', editing);
   render();
   requestAnimationFrame(drawLines);
+}
+
+async function loadAccounts() {
+  try {
+    accounts = await rpc('accounts_public');
+    if (el.setup && !el.setup.hidden) renderAccChips();
+  } catch { /* egal */ }
+}
+
+function renderAccChips() {
+  if (!el.accChips) return;
+  const used = new Set(setupNames().map(norm));
+  mount(el.accChips, accounts.length
+    ? accounts.map((a) => {
+        const taken = used.has(norm(a.username));
+        const chip = h('button', { type: 'button', class: `tn-acc__chip${a.checked_in ? ' is-in' : ''}`, disabled: taken, title: a.checked_in ? 'eingecheckt' : 'nicht eingecheckt' },
+          h('span', { class: 'led', 'aria-hidden': 'true' }), a.username, taken ? ' ✓' : '');
+        chip.addEventListener('click', () => {
+          const slot = el.setupInputs.find((x) => !x.value.trim());
+          if (!slot) { toast('MAXIMAL 8 OPERATOREN'); return; }
+          slot.value = a.username;
+          updateSetupCount();
+          renderAccChips();
+        });
+        return chip;
+      })
+    : h('p', { class: 'muted', text: 'Noch keine registrierten Accounts – Namen einfach eintippen.' }));
+}
+
+async function takeCheckedIn() {
+  const names = accounts.filter((a) => a.checked_in).map((a) => a.username).slice(0, 8);
+  if (!names.length) { toast('NOCH NIEMAND EINGECHECKT (MISSION OPS)'); return; }
+  if (setupNames().length) {
+    const yes = await confirmDialog({ title: 'EINGECHECKTE ÜBERNEHMEN?', text: `Die Liste wird ersetzt durch: ${names.join(', ')}`, confirmLabel: 'ÜBERNEHMEN' });
+    if (!yes) return;
+  }
+  el.setupInputs.forEach((input, i) => { input.value = names[i] || ''; });
+  updateSetupCount();
+  renderAccChips();
 }
 
 function fillSetupInputs() {

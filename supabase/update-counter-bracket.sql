@@ -1,10 +1,12 @@
 -- =====================================================================
---  OPERATION LAN-PARTY – UPDATE: Game Counter + Bracket/Turnier
+--  OPERATION LAN-PARTY – UPDATE: Game Counter + CS-Stats, Bracket/Turnier,
+--  Operator-Accounts (Login), Mission Ops und Hold-Screen
 --  Nur die NEUEN Teile. Voraussetzung: schema.sql wurde schon einmal
 --  ausgeführt (nutzt die vorhandenen Hilfsfunktionen und das Commander-Login).
 --  Supabase → SQL Editor → New query → alles einfügen → Run.
 --  Kann gefahrlos mehrfach ausgeführt werden. Einzige DROP-Befehle: das
---  alte, ersetzte 5-Slot-Bracket (siehe Abschnitt 10).
+--  alte, ersetzte 5-Slot-Bracket (Abschnitt 10) und ein Primärschlüssel,
+--  damit sich ein Quiz-Spieler auf mehreren Geräten anmelden kann.
 -- =====================================================================
 
 -- =====================================================================
@@ -64,6 +66,69 @@ create table if not exists public.tournament (
 insert into public.tournament (id) values (1) on conflict (id) do nothing;
 
 
+-- =====================================================================
+-- 11. OPERATOR-ACCOUNTS (Login für Quiz, Game Counter, Bracket)
+--     Benutzername = Callsign im Quiz, Name im Bracket, Spieler in den
+--     CS-Stats. Passwörter nur als bcrypt-Hash. Für den Browser NICHT lesbar.
+-- =====================================================================
+
+create table if not exists public.accounts (
+  id                  uuid primary key default gen_random_uuid(),
+  username            text not null check (char_length(username) between 2 and 24),
+  username_normalized text not null unique,
+  password_hash       text not null,
+  checked_in          boolean not null default false,
+  checked_in_at       timestamptz,
+  failed_logins       int not null default 0,
+  locked_until        timestamptz,
+  created_at          timestamptz not null default now(),
+  last_seen           timestamptz
+);
+
+create table if not exists public.account_sessions (
+  token_hash text primary key,
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index if not exists account_sessions_account_idx on public.account_sessions (account_id);
+
+-- Quiz-Spieler können zu einem Account gehören (Beitritt ohne QR/Code)
+alter table public.players add column if not exists account_id uuid references public.accounts (id) on delete set null;
+-- Mehrere Geräte pro Spieler erlauben (z. B. Handy + Laptop mit demselben Login)
+alter table public.player_tokens drop constraint if exists player_tokens_pkey;
+create index if not exists player_tokens_player_idx on public.player_tokens (player_id);
+
+-- Hold-Screen: solange aktiv und nicht alle eingecheckt sind, zeigt die
+-- Webseite allen einen STANDBY-Bildschirm (eine Zeile, öffentlich lesbar)
+create table if not exists public.site_state (
+  id           int primary key default 1 check (id = 1),
+  hold_enabled boolean not null default false,
+  released     boolean not null default false,
+  updated_at   timestamptz not null default now()
+);
+insert into public.site_state (id) values (1) on conflict (id) do nothing;
+
+
+-- =====================================================================
+-- 12. CS-STATS pro Match (tragen die Spieler selbst ein)
+-- =====================================================================
+
+create table if not exists public.counter_stats (
+  match_id   bigint not null references public.counter_matches (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  kills      int not null check (kills between 0 and 200),
+  deaths     int not null check (deaths between 0 and 200),
+  assists    int not null check (assists between 0 and 200),
+  hs_pct     int not null check (hs_pct between 0 and 100),
+  adr        int not null check (adr between 0 and 999),
+  mvps       int not null default 0 check (mvps between 0 and 50),
+  updated_at timestamptz not null default now(),
+  primary key (match_id, account_id)
+);
+create index if not exists counter_stats_account_idx on public.counter_stats (account_id);
+
+
 -- ---------------------------------------------------------------------
 -- Hilfsfunktion: Namen säubern + prüfen (intern)
 -- ---------------------------------------------------------------------
@@ -99,6 +164,15 @@ as $$
                'at_ms', public._ms(m.created_at))
              order by m.id desc)
         from (select * from public.counter_matches order by id desc limit 200) m), '[]'::jsonb),
+    'stats', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'match_id', s.match_id, 'player', a.username,
+               'kills', s.kills, 'deaths', s.deaths, 'assists', s.assists,
+               'hs', s.hs_pct, 'adr', s.adr, 'mvps', s.mvps)
+             order by s.match_id desc, s.kills desc)
+        from public.counter_stats s
+        join public.accounts a on a.id = s.account_id
+       where s.match_id in (select id from public.counter_matches order by id desc limit 200)), '[]'::jsonb),
     'server_now_ms', public._ms(clock_timestamp())
   )
 $$;
@@ -281,15 +355,418 @@ end $$;
 
 
 -- ---------------------------------------------------------------------
--- RLS + Rechte für Counter und Turnier
+-- ACCOUNTS – interne Helfer
+-- ---------------------------------------------------------------------
+create or replace function public._norm(p text)
+returns text language sql stable set search_path = ''
+as $$ select lower(normalize(public._clean_callsign(p), NFKC)) $$;
+
+create or replace function public._account_auth(p_token text)
+returns public.accounts language plpgsql stable set search_path = ''
+as $$
+declare a public.accounts;
+begin
+  select acc.* into a
+    from public.account_sessions s
+    join public.accounts acc on acc.id = s.account_id
+   where s.token_hash = public._sha256(p_token) and s.expires_at > now();
+  if not found then raise exception 'ACCOUNT_UNAUTHORIZED'; end if;
+  return a;
+end $$;
+
+create or replace function public._account_session(p_account_id uuid)
+returns text language plpgsql volatile set search_path = ''
+as $$
+declare v_token text := public._new_token();
+begin
+  delete from public.account_sessions where expires_at < now();
+  insert into public.account_sessions (token_hash, account_id, expires_at)
+  values (public._sha256(v_token), p_account_id, now() + interval '30 days');
+  return v_token;
+end $$;
+
+-- Ist ein Name im Team-Roster des Game Counters?
+create or replace function public._in_roster(p_norm text)
+returns boolean language sql stable set search_path = ''
+as $$
+  select exists (select 1 from public.counter_team t, unnest(t.roster) r
+                  where t.id = 1 and r <> '' and public._norm(r) = p_norm)
+$$;
+
+create or replace function public._in_tournament(p_norm text)
+returns boolean language sql stable set search_path = ''
+as $$
+  select exists (select 1 from public.tournament t, unnest(t.players) r
+                  where t.id = 1 and public._norm(r) = p_norm)
+$$;
+
+-- Aktuelle Quiz-Mission (letzte offene der letzten 12 Stunden)
+create or replace function public._active_game()
+returns public.games language sql stable set search_path = ''
+as $$
+  select g.* from public.games g
+   where g.status not in ('finished', 'aborted') and g.created_at > now() - interval '12 hours'
+   order by g.created_at desc limit 1
+$$;
+
+-- Hold-Screen automatisch freigeben, sobald alle eingecheckt sind
+create or replace function public._refresh_site()
+returns void language plpgsql volatile set search_path = ''
+as $$
+declare v_total int; v_checked int;
+begin
+  select count(*), count(*) filter (where checked_in) into v_total, v_checked from public.accounts;
+  update public.site_state
+     set released = released or (hold_enabled and v_total > 0 and v_checked = v_total),
+         updated_at = now()
+   where id = 1;
+end $$;
+
+
+-- ---------------------------------------------------------------------
+-- ACCOUNTS – öffentliche RPCs
+-- ---------------------------------------------------------------------
+create or replace function public.account_register(p_username text, p_password text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare v_name text; v_id uuid;
+begin
+  v_name := public._clean_label(p_username, 24);
+  if char_length(v_name) < 2 then raise exception 'NAME_LENGTH'; end if;
+  if p_password is null or char_length(p_password) < 4 or char_length(p_password) > 64 then
+    raise exception 'PASSWORD_INVALID';
+  end if;
+  if (select count(*) from public.accounts) >= 100 then raise exception 'LIMIT_REACHED'; end if;
+  begin
+    insert into public.accounts (username, username_normalized, password_hash, last_seen)
+    values (v_name, public._norm(v_name), extensions.crypt(p_password, extensions.gen_salt('bf', 8)), now())
+    returning id into v_id;
+  exception when unique_violation then
+    raise exception 'NAME_TAKEN';
+  end;
+  perform public._refresh_site();
+  return jsonb_build_object('ok', true, 'token', public._account_session(v_id), 'username', v_name);
+end $$;
+
+-- Falsches Passwort → {ok:false} (kein Fehler, damit der Fehlversuch gezählt bleibt)
+create or replace function public.account_login(p_username text, p_password text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare a public.accounts;
+begin
+  select * into a from public.accounts where username_normalized = public._norm(p_username);
+  if not found then return jsonb_build_object('ok', false, 'error', 'LOGIN_FAILED'); end if;
+  if a.locked_until is not null and a.locked_until > now() then
+    return jsonb_build_object('ok', false, 'error', 'LOGIN_LOCKED');
+  end if;
+  if p_password is null or extensions.crypt(p_password, a.password_hash) <> a.password_hash then
+    update public.accounts
+       set failed_logins = failed_logins + 1,
+           locked_until = case when failed_logins + 1 >= 8 then now() + interval '5 minutes' else null end
+     where id = a.id;
+    return jsonb_build_object('ok', false, 'error', 'LOGIN_FAILED');
+  end if;
+  update public.accounts set failed_logins = 0, locked_until = null, last_seen = now() where id = a.id;
+  return jsonb_build_object('ok', true, 'token', public._account_session(a.id), 'username', a.username);
+end $$;
+
+create or replace function public.account_logout(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  delete from public.account_sessions where token_hash = public._sha256(p_token);
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Profil: alles zu "mir" auf einen Blick (aktualisiert last_seen = online)
+create or replace function public.account_me(p_token text, p_touch boolean default true)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  a public.accounts;
+  g public.games;
+  v_roster boolean;
+begin
+  a := public._account_auth(p_token);
+  if p_touch then update public.accounts set last_seen = now() where id = a.id; end if;
+  g := public._active_game();
+  v_roster := public._in_roster(a.username_normalized);
+  return jsonb_build_object(
+    'username', a.username,
+    'checked_in', a.checked_in,
+    'created_at_ms', public._ms(a.created_at),
+    'quiz', case when g.id is null then null else jsonb_build_object(
+              'code', g.code, 'status', g.status, 'current_question', g.current_question,
+              'joined', exists (select 1 from public.players p where p.game_id = g.id and p.account_id = a.id)) end,
+    'team', jsonb_build_object(
+              'in_roster', v_roster,
+              'pending_stats', case when v_roster then
+                 (select count(*) from public.counter_matches m
+                   where not exists (select 1 from public.counter_stats s where s.match_id = m.id and s.account_id = a.id))
+               else 0 end,
+              'totals', (select jsonb_build_object(
+                 'matches', count(*), 'kills', coalesce(sum(kills), 0), 'deaths', coalesce(sum(deaths), 0),
+                 'assists', coalesce(sum(assists), 0), 'adr', coalesce(round(avg(adr)), 0), 'hs', coalesce(round(avg(hs_pct)), 0),
+                 'mvps', coalesce(sum(mvps), 0))
+                 from public.counter_stats s where s.account_id = a.id)),
+    'tournament', jsonb_build_object('participant', public._in_tournament(a.username_normalized))
+  );
+end $$;
+
+-- Einchecken macht ausschließlich der Commander (MISSION OPS → ops_set_checkin).
+-- Eine frühere Selbst-Check-in-Funktion wird entfernt, falls vorhanden.
+drop function if exists public.account_set_checkin(text, boolean);
+
+-- Öffentliche Liste (nur Name + eingecheckt) für Bracket/Counter-Auswahl
+create or replace function public.accounts_public()
+returns jsonb language sql stable security definer set search_path = ''
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object('username', a.username, 'checked_in', a.checked_in)
+                            order by a.username_normalized), '[]'::jsonb)
+    from public.accounts a
+$$;
+
+-- Hold-Screen-Status (öffentlich)
+create or replace function public.site_status()
+returns jsonb language sql stable security definer set search_path = ''
+as $$
+  select jsonb_build_object(
+    'hold_enabled', s.hold_enabled,
+    'released', s.released,
+    'open', (not s.hold_enabled) or s.released,
+    'total', (select count(*) from public.accounts),
+    'checked_in', (select count(*) from public.accounts where checked_in),
+    'operators', (select coalesce(jsonb_agg(jsonb_build_object('username', a.username, 'checked_in', a.checked_in)
+                                            order by a.checked_in desc, a.username_normalized), '[]'::jsonb)
+                    from public.accounts a))
+  from public.site_state s where s.id = 1
+$$;
+
+
+-- ---------------------------------------------------------------------
+-- QUIZ mit Login: Beitritt ohne QR/Code, Callsign = Benutzername
+-- ---------------------------------------------------------------------
+create or replace function public.join_game_account(p_token text, p_code text default null)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  a        public.accounts;
+  g        public.games;
+  v_code   text := btrim(coalesce(p_code, ''));
+  v_player uuid;
+  v_ptoken text := public._new_token();
+begin
+  a := public._account_auth(p_token);
+  if v_code <> '' then
+    if v_code !~ '^[0-9]{6}$' then raise exception 'MISSION_CODE_INVALID'; end if;
+    select * into g from public.games where code = v_code for share;
+    if not found then raise exception 'MISSION_NOT_FOUND'; end if;
+  else
+    -- 1. laufende Mission, in der ich schon bin – 2. neueste Lobby
+    select gg.* into g from public.games gg
+     where gg.status not in ('finished', 'aborted') and gg.created_at > now() - interval '12 hours'
+       and exists (select 1 from public.players p where p.game_id = gg.id and p.account_id = a.id)
+     order by gg.created_at desc limit 1;
+    if not found then
+      select gg.* into g from public.games gg
+       where gg.status = 'lobby' and gg.created_at > now() - interval '12 hours'
+       order by gg.created_at desc limit 1;
+    end if;
+    if g.id is null then raise exception 'NO_ACTIVE_MISSION'; end if;
+    perform 1 from public.games where id = g.id for share;
+  end if;
+
+  select id into v_player from public.players where game_id = g.id and account_id = a.id;
+  if v_player is null then
+    if g.status in ('finished', 'aborted') then raise exception 'MISSION_CLOSED'; end if;
+    if g.status <> 'lobby' then raise exception 'MISSION_ALREADY_STARTED'; end if;
+    if (select count(*) from public.players where game_id = g.id) >= g.max_players then raise exception 'MISSION_FULL'; end if;
+    begin
+      insert into public.players (game_id, callsign, callsign_normalized, account_id)
+      values (g.id, a.username, a.username_normalized, a.id)
+      returning id into v_player;
+    exception when unique_violation then
+      raise exception 'CALLSIGN_TAKEN';
+    end;
+  end if;
+  insert into public.player_tokens (player_id, token_hash) values (v_player, public._sha256(v_ptoken));
+  update public.accounts set last_seen = now() where id = a.id;
+  return jsonb_build_object('player_id', v_player, 'player_token', v_ptoken,
+                            'game_id', g.id, 'code', g.code, 'callsign', a.username);
+end $$;
+
+
+-- ---------------------------------------------------------------------
+-- CS-STATS: jeder Spieler trägt seine eigene Zeile pro Match ein
+-- ---------------------------------------------------------------------
+create or replace function public.counter_submit_stats(
+  p_token text, p_match_id bigint, p_kills int, p_deaths int, p_assists int, p_hs_pct int, p_adr int, p_mvps int)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare a public.accounts;
+begin
+  a := public._account_auth(p_token);
+  if not exists (select 1 from public.counter_matches where id = p_match_id) then raise exception 'NOT_FOUND'; end if;
+  if not public._in_roster(a.username_normalized) then raise exception 'NOT_IN_TEAM'; end if;
+  if p_kills is null or p_deaths is null or p_assists is null or p_hs_pct is null or p_adr is null
+     or p_kills not between 0 and 200 or p_deaths not between 0 and 200 or p_assists not between 0 and 200
+     or p_hs_pct not between 0 and 100 or p_adr not between 0 and 999 or coalesce(p_mvps, 0) not between 0 and 50 then
+    raise exception 'STATS_INVALID';
+  end if;
+  insert into public.counter_stats (match_id, account_id, kills, deaths, assists, hs_pct, adr, mvps)
+  values (p_match_id, a.id, p_kills, p_deaths, p_assists, p_hs_pct, p_adr, coalesce(p_mvps, 0))
+  on conflict (match_id, account_id) do update
+     set kills = excluded.kills, deaths = excluded.deaths, assists = excluded.assists,
+         hs_pct = excluded.hs_pct, adr = excluded.adr, mvps = excluded.mvps, updated_at = now();
+  update public.accounts set last_seen = now() where id = a.id;
+  return public.counter_state();
+end $$;
+
+
+-- ---------------------------------------------------------------------
+-- MISSION OPS (Commander): Anwesenheit, Accounts, Hold-Screen
+-- ---------------------------------------------------------------------
+create or replace function public.ops_state(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare g public.games;
+begin
+  perform public._require_host(p_token);
+  g := public._active_game();
+  return jsonb_build_object(
+    'server_now_ms', public._ms(clock_timestamp()),
+    'site', public.site_status(),
+    'quiz', case when g.id is null then null else jsonb_build_object(
+              'code', g.code, 'status', g.status, 'current_question', g.current_question,
+              'player_count', (select count(*) from public.players where game_id = g.id)) end,
+    'accounts', coalesce((select jsonb_agg(jsonb_build_object(
+        'id', a.id, 'username', a.username, 'checked_in', a.checked_in,
+        'checked_in_at_ms', public._ms(a.checked_in_at), 'last_seen_ms', public._ms(a.last_seen),
+        'created_at_ms', public._ms(a.created_at), 'locked', a.locked_until is not null and a.locked_until > now(),
+        'in_roster', public._in_roster(a.username_normalized),
+        'in_tournament', public._in_tournament(a.username_normalized),
+        'in_quiz', g.id is not null and exists (select 1 from public.players p where p.game_id = g.id and p.account_id = a.id),
+        'pending_stats', case when public._in_roster(a.username_normalized) then
+            (select count(*) from public.counter_matches m
+              where not exists (select 1 from public.counter_stats s where s.match_id = m.id and s.account_id = a.id))
+          else 0 end)
+        order by a.username_normalized) from public.accounts a), '[]'::jsonb)
+  );
+end $$;
+
+create or replace function public.ops_set_checkin(p_token text, p_account_id uuid, p_checked boolean)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  update public.accounts
+     set checked_in = coalesce(p_checked, false),
+         checked_in_at = case when coalesce(p_checked, false) then coalesce(checked_in_at, now()) else null end
+   where id = p_account_id;
+  perform public._refresh_site();
+  return public.ops_state(p_token);
+end $$;
+
+-- Alle auf einmal ein- bzw. auschecken
+create or replace function public.ops_checkin_all(p_token text, p_checked boolean)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  update public.accounts
+     set checked_in = coalesce(p_checked, false),
+         checked_in_at = case when coalesce(p_checked, false) then coalesce(checked_in_at, now()) else null end
+   where true;
+  perform public._refresh_site();
+  return public.ops_state(p_token);
+end $$;
+
+-- Accounts vorab anlegen (z. B. für Gäste)
+create or replace function public.ops_create_account(p_token text, p_username text, p_password text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+declare v_name text;
+begin
+  perform public._require_host(p_token);
+  v_name := public._clean_label(p_username, 24);
+  if char_length(v_name) < 2 then raise exception 'NAME_LENGTH'; end if;
+  if p_password is null or char_length(p_password) < 4 or char_length(p_password) > 64 then raise exception 'PASSWORD_INVALID'; end if;
+  if (select count(*) from public.accounts) >= 100 then raise exception 'LIMIT_REACHED'; end if;
+  begin
+    insert into public.accounts (username, username_normalized, password_hash)
+    values (v_name, public._norm(v_name), extensions.crypt(p_password, extensions.gen_salt('bf', 8)));
+  exception when unique_violation then
+    raise exception 'NAME_TAKEN';
+  end;
+  perform public._refresh_site();
+  return public.ops_state(p_token);
+end $$;
+
+create or replace function public.ops_reset_password(p_token text, p_account_id uuid, p_password text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  if p_password is null or char_length(p_password) < 4 or char_length(p_password) > 64 then raise exception 'PASSWORD_INVALID'; end if;
+  update public.accounts
+     set password_hash = extensions.crypt(p_password, extensions.gen_salt('bf', 8)), failed_logins = 0, locked_until = null
+   where id = p_account_id;
+  delete from public.account_sessions where account_id = p_account_id;
+  return public.ops_state(p_token);
+end $$;
+
+create or replace function public.ops_delete_account(p_token text, p_account_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  delete from public.accounts where id = p_account_id;
+  perform public._refresh_site();
+  return public.ops_state(p_token);
+end $$;
+
+-- Hold-Screen an/aus. Einschalten setzt die Freigabe zurück.
+create or replace function public.ops_set_hold(p_token text, p_enabled boolean)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  update public.site_state
+     set hold_enabled = coalesce(p_enabled, false), released = false, updated_at = now()
+   where id = 1;
+  perform public._refresh_site();
+  return public.ops_state(p_token);
+end $$;
+
+-- Sofort freigeben (auch wenn noch nicht alle eingecheckt sind)
+create or replace function public.ops_release(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  perform public._require_host(p_token);
+  update public.site_state set released = true, updated_at = now() where id = 1;
+  return public.ops_state(p_token);
+end $$;
+
+
+-- ---------------------------------------------------------------------
+-- RLS + Rechte für Counter, Turnier, Accounts, Stats, Hold-Screen
 -- ---------------------------------------------------------------------
 alter table public.counter_team    enable row level security;
 alter table public.counter_matches enable row level security;
 alter table public.tournament      enable row level security;
+alter table public.accounts        enable row level security;
+alter table public.account_sessions enable row level security;
+alter table public.counter_stats   enable row level security;
+alter table public.site_state      enable row level security;
 
-revoke all on table public.counter_team, public.counter_matches, public.tournament
+revoke all on table public.counter_team, public.counter_matches, public.tournament,
+  public.accounts, public.account_sessions, public.counter_stats, public.site_state
 from public, anon, authenticated;
-grant select on table public.counter_team, public.counter_matches, public.tournament
+-- öffentlich lesbar (Live-Anzeige): Counter, Turnier, Stats, Hold-Status.
+-- accounts / account_sessions bleiben komplett gesperrt.
+grant select on table public.counter_team, public.counter_matches, public.tournament,
+  public.counter_stats, public.site_state
 to anon, authenticated;
 
 drop policy if exists "counter_team: lesen erlaubt" on public.counter_team;
@@ -301,9 +778,24 @@ create policy "counter_matches: lesen erlaubt" on public.counter_matches
 drop policy if exists "tournament: lesen erlaubt" on public.tournament;
 create policy "tournament: lesen erlaubt" on public.tournament
   for select to anon, authenticated using (true);
+drop policy if exists "counter_stats: lesen erlaubt" on public.counter_stats;
+create policy "counter_stats: lesen erlaubt" on public.counter_stats
+  for select to anon, authenticated using (true);
+drop policy if exists "site_state: lesen erlaubt" on public.site_state;
+create policy "site_state: lesen erlaubt" on public.site_state
+  for select to anon, authenticated using (true);
 
 revoke all on function
   public._clean_label(text, int),
+  public._norm(text), public._account_auth(text), public._account_session(uuid),
+  public._in_roster(text), public._in_tournament(text), public._active_game(), public._refresh_site(),
+  public.account_register(text, text), public.account_login(text, text), public.account_logout(text),
+  public.account_me(text, boolean), public.accounts_public(),
+  public.site_status(), public.join_game_account(text, text),
+  public.counter_submit_stats(text, bigint, int, int, int, int, int, int),
+  public.ops_state(text), public.ops_set_checkin(text, uuid, boolean), public.ops_checkin_all(text, boolean), public.ops_create_account(text, text, text),
+  public.ops_reset_password(text, uuid, text), public.ops_delete_account(text, uuid),
+  public.ops_set_hold(text, boolean), public.ops_release(text),
   public.counter_state(), public.counter_set_team(text, text, text[]),
   public.counter_add_match(text, text, text, int, int), public.counter_delete_match(text, bigint),
   public.counter_reset(text),
@@ -312,6 +804,13 @@ revoke all on function
 from public, anon, authenticated;
 
 grant execute on function
+  public.account_register(text, text), public.account_login(text, text), public.account_logout(text),
+  public.account_me(text, boolean), public.accounts_public(),
+  public.site_status(), public.join_game_account(text, text),
+  public.counter_submit_stats(text, bigint, int, int, int, int, int, int),
+  public.ops_state(text), public.ops_set_checkin(text, uuid, boolean), public.ops_checkin_all(text, boolean), public.ops_create_account(text, text, text),
+  public.ops_reset_password(text, uuid, text), public.ops_delete_account(text, uuid),
+  public.ops_set_hold(text, boolean), public.ops_release(text),
   public.counter_state(), public.counter_set_team(text, text, text[]),
   public.counter_add_match(text, text, text, int, int), public.counter_delete_match(text, bigint),
   public.counter_reset(text),
@@ -319,12 +818,12 @@ grant execute on function
   public.tournament_save_scores(text, int[], int[]), public.tournament_clear_scores(text)
 to anon, authenticated;
 
--- Realtime für Counter und Turnier
+-- Realtime für Counter, Turnier, Stats und Hold-Screen
 do $$
 declare t text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['counter_team', 'counter_matches', 'tournament'] loop
+    foreach t in array array['counter_team', 'counter_matches', 'tournament', 'counter_stats', 'site_state'] loop
       if not exists (select 1 from pg_publication_tables
                       where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
         execute format('alter publication supabase_realtime add table public.%I', t);
@@ -334,6 +833,7 @@ begin
 end $$;
 
 
--- Kontrolle: beide Werte sollten 1 sein
+-- Kontrolle: alle drei Werte sollten 1 sein
 select (select count(*) from public.counter_team) as counter_bereit,
-       (select count(*) from public.tournament)   as turnier_bereit;
+       (select count(*) from public.tournament)   as turnier_bereit,
+       (select count(*) from public.site_state)   as accounts_bereit;

@@ -12,6 +12,8 @@ import { createSync } from './sync.js';
 import { initAudio, sfx, bindSoundToggle, updateSoundscape, tracks, bombTrackActive, updateUnlockHint } from './audio.js';
 import { setNetBanner, setLinkLed, renderConfigError, createCountdown, progressBar, coordLine, stamp } from './ui.js';
 import { TEXT, phaseInfo, rankFor, SOUND_SETUP } from './questions.js';
+import { getAccount, clearAccount, startHeartbeat } from './account.js';
+import { initGate } from './gate.js';
 
 const app = document.getElementById('app');
 const srStatus = document.getElementById('sr-status');
@@ -44,6 +46,8 @@ function init() {
     renderConfigError(app, configStatus);
     return;
   }
+  startHeartbeat();
+  initGate();
 
   const params = new URLSearchParams(window.location.search);
   const paramCode = onlyDigits(params.get('game'));
@@ -134,6 +138,38 @@ function renderJoin({ code = '', callsign = '', error = '' } = {}) {
     }
   });
 
+  // Mit Login: ohne QR/Code der aktuellen Mission beitreten, Callsign = Benutzername
+  const acc = getAccount();
+  let accountPanel;
+  if (acc) {
+    const joinAcc = h('button', { type: 'button', class: 'btn btn--primary btn--block btn--xl', id: 'join-account' }, `ALS ${acc.username} BEITRETEN`);
+    const accErr = h('p', { class: 'form-error', role: 'alert' });
+    joinAcc.addEventListener('click', async () => {
+      joinAcc.disabled = true;
+      accErr.textContent = '';
+      try {
+        const res = await rpc('join_game_account', { p_token: acc.token, p_code: onlyDigits(codeInput.value) || null });
+        const s = { code: res.code, gameId: res.game_id, playerId: res.player_id, token: res.player_token, callsign: res.callsign };
+        storage.set(sessionKey(s.code), s);
+        storage.set(LAST_KEY, s.code);
+        sfx.lock();
+        startSession(s);
+      } catch (e) {
+        if (e.code === 'ACCOUNT_UNAUTHORIZED') { clearAccount(); renderJoin({ code: codeInput.value, error: 'LOGIN ABGELAUFEN – BITTE NEU EINLOGGEN' }); return; }
+        accErr.textContent = e.code === 'NO_ACTIVE_MISSION' ? 'KEINE OFFENE MISSION – WARTE AUF DEN COMMANDER' : errorText(e.code);
+        joinAcc.disabled = false;
+      }
+    });
+    accountPanel = h('div', { class: 'acc-join' },
+      h('p', { class: 'eyebrow', text: `EINGELOGGT ALS ${acc.username}` }),
+      joinAcc,
+      h('p', { class: 'field__hint', text: 'Kein QR-Code und kein Code nötig – du trittst der aktuellen Mission bei. Dein Benutzername ist dein Callsign.' }),
+      accErr,
+      h('p', { class: 'acc-or', text: 'ODER ALS GAST MIT MISSION CODE' }));
+  } else {
+    accountPanel = h('p', { class: 'acc-hint' }, 'Mit Login ohne Code beitreten: ', h('a', { href: './login.html?return=quiz.html' }, 'OPERATOR LOGIN ▸'));
+  }
+
   mount(app,
     h('section', { class: 'card card--briefing' },
       stamp('CLASSIFIED'),
@@ -142,6 +178,7 @@ function renderJoin({ code = '', callsign = '', error = '' } = {}) {
       h('p', { class: 'subtitle', text: TEXT.subtitle }),
       h('div', { class: 'stripes', 'aria-hidden': 'true' }),
       h('p', { class: 'meta', text: `${TEXT.eventDate} // ${TEXT.eventTime} UHR // COMMANDER ${TEXT.commander}` }),
+      accountPanel,
       form,
       coordLine('BRIEFING ROOM')));
   announce('Mission beitreten');

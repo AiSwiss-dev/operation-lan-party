@@ -1,6 +1,7 @@
 // =====================================================================
-//  GAME COUNTER (counter.html) – Team-Bilanz für das 5er-Team
-//  Alle sehen live mit, bearbeiten kann nur der Commander.
+//  GAME COUNTER (counter.html) – Team-Bilanz + CS-Stats für das 5er-Team
+//  Alle sehen live mit. Matches und Team trägt der Commander ein, die
+//  CS-Stats (K/A/D, HS %, ADR, MVPs) trägt jeder Spieler selbst ein.
 // =====================================================================
 
 import { configStatus, rpc, watchTables } from './supabase-client.js';
@@ -8,6 +9,9 @@ import { h, mount, errorText, confirmDialog, toast } from './utils.js';
 import { createSync } from './sync.js';
 import { setNetBanner, setLinkLed, renderConfigError, coordLine, stamp } from './ui.js';
 import { checkCommander, commanderLogin, commanderLogout, getToken, clearToken } from './commander.js';
+import { getAccount, clearAccount, norm, startHeartbeat } from './account.js';
+import { initGate } from './gate.js';
+import { aggregate, leaderboardTable, scoreboard, statsDialog } from './stats.js';
 
 const app = document.getElementById('app');
 const cmdArea = document.getElementById('cmd-area');
@@ -23,6 +27,9 @@ let commander = false;
 let editing = false;
 let busy = false;
 let sync = null;
+let sortKey = 'kd';
+let accounts = [];
+const expanded = new Set();
 const el = {};
 
 // ---------------------------------------------------------------------
@@ -31,7 +38,11 @@ async function init() {
     renderConfigError(app, configStatus);
     return;
   }
+  startHeartbeat();
+  initGate();
   buildSkeleton();
+  loadAccounts();
+  setInterval(loadAccounts, 30000);
   commander = await checkCommander();
   editing = commander;
   renderToolbar();
@@ -43,7 +54,7 @@ async function init() {
     onConnection: (ok) => setNetBanner(!ok),
     onLink: setLinkLed,
   });
-  watchTables(['counter_team', 'counter_matches'], {
+  watchTables(['counter_team', 'counter_matches', 'counter_stats'], {
     onChange: () => sync.realtimeEvent(),
     onLive: (live) => sync.setSubscribed(live),
   });
@@ -66,6 +77,8 @@ function buildSkeleton() {
   el.editor = buildEditor();
   el.maps = h('div', { class: 'cnt-maps' });
   el.log = h('ol', { class: 'cnt-log' });
+  el.mine = h('div', { class: 'cnt-mine', 'aria-live': 'polite' });
+  el.leader = h('div', { class: 'stats-wrap' });
 
   mount(app,
     h('section', { class: 'card cnt-hero' },
@@ -83,7 +96,12 @@ function buildSkeleton() {
         h('div', {}, h('dt', { text: 'SERIE' }), el.streak),
         h('div', {}, h('dt', { text: 'MATCHES' }), el.played)),
       h('div', { class: 'cnt-form-wrap' }, h('span', { class: 'panel__label', text: 'FORM (LETZTE 10)' }), el.form)),
+    el.mine,
     el.editor,
+    h('section', { class: 'card stats-card' },
+      h('h2', { class: 'section-title', text: 'SQUAD LEADERBOARD // CS-STATS' }),
+      h('p', { class: 'field__hint', text: 'Summe bzw. Durchschnitt aller Matches mit eingetragenen Stats. Spaltenkopf antippen zum Sortieren.' }),
+      el.leader),
     h('div', { class: 'cnt-grid' },
       h('section', { class: 'card' }, h('h2', { class: 'section-title', text: 'MAP-BILANZ' }), el.maps),
       h('section', { class: 'card' }, h('h2', { class: 'section-title', text: 'MATCH-LOG' }), el.log)),
@@ -106,7 +124,9 @@ function buildEditor() {
 
   // Team
   el.teamInput = h('input', { id: 'cnt-team', class: 'input', maxlength: '32', autocomplete: 'off' });
-  el.rosterInputs = [0, 1, 2, 3, 4].map((i) => h('input', { class: 'input', maxlength: '24', autocomplete: 'off', placeholder: `OPERATOR ${i + 1}`, 'aria-label': `Operator ${i + 1}` }));
+  el.rosterInputs = [0, 1, 2, 3, 4].map((i) => h('input', { class: 'input', maxlength: '24', autocomplete: 'off', list: 'cnt-accounts', placeholder: `OPERATOR ${i + 1}`, 'aria-label': `Operator ${i + 1}` }));
+  el.accountList = h('datalist', { id: 'cnt-accounts' });
+  el.rosterHint = h('p', { class: 'field__hint' });
   const saveTeam = h('button', { type: 'button', class: 'btn btn--ghost' }, 'TEAM SPEICHERN');
   saveTeam.addEventListener('click', () => act((t) => rpc('counter_set_team', {
     p_token: t, p_name: el.teamInput.value, p_roster: el.rosterInputs.map((x) => x.value),
@@ -131,7 +151,8 @@ function buildEditor() {
       h('summary', {}, 'TEAM & OPERATOREN BEARBEITEN'),
       h('div', { class: 'form' },
         h('div', { class: 'field' }, h('label', { for: 'cnt-team', class: 'field__label' }, 'TEAMNAME'), el.teamInput),
-        h('div', { class: 'cnt-roster-inputs' }, el.rosterInputs),
+        h('div', { class: 'cnt-roster-inputs' }, el.rosterInputs, el.accountList),
+        el.rosterHint,
         h('div', { class: 'cnt-editor__actions' }, saveTeam, reset))));
 }
 
@@ -228,21 +249,50 @@ function render() {
         })))
     : h('p', { class: 'muted', text: 'Noch keine Matches eingetragen.' }));
 
-  // Match-Log
+  // CS-Stats: eigene offene Matches, Leaderboard
+  const stats = state.stats || [];
+  const me = getAccount();
+  const rosterNames = team.roster.filter(Boolean);
+  const inTeam = !!(me && rosterNames.some((n) => norm(n) === norm(me.username)));
+  const myStats = (matchId) => (me ? stats.find((x) => x.match_id === matchId && norm(x.player) === norm(me.username)) : null);
+  renderMine(me, inTeam, matches.filter((m) => !myStats(m.id)));
+  mount(el.leader, rosterNames.length
+    ? leaderboardTable(aggregate(team.roster, stats), sortKey, (k) => { sortKey = k; render(); }, me && me.username)
+    : h('p', { class: 'muted', text: 'Zuerst das 5er-Team eintragen (Commander).' }));
+
+  // Match-Log mit Scoreboard pro Match
   mount(el.log, matches.length
     ? matches.slice(0, 50).map((m, i) => {
         const del = editing ? h('button', { type: 'button', class: 'chip__remove', 'aria-label': `Match ${matches.length - i} löschen`, title: 'Match löschen' }, '×') : null;
         if (del) del.addEventListener('click', () => deleteMatch(m));
-        return h('li', { class: `cnt-log__item ${RESULT[m.result].cls}` },
-          h('span', { class: 'cnt-log__badge', text: RESULT[m.result].short }),
-          h('span', { class: 'cnt-log__main' },
-            h('b', { text: RESULT[m.result].label }),
-            m.map ? h('span', { class: 'cnt-log__map', text: ` // ${m.map}` }) : null),
-          h('span', { class: 'cnt-log__score', text: m.score_us !== null && m.score_us !== undefined ? `${m.score_us}:${m.score_them}` : '' }),
-          h('span', { class: 'cnt-log__time', text: timeLabel(m.at_ms) }),
-          del);
+        const filled = rosterNames.filter((n) => stats.some((x) => x.match_id === m.id && norm(x.player) === norm(n))).length;
+        const open = expanded.has(m.id);
+        const toggle = h('button', { type: 'button', class: `cnt-log__stats${filled < rosterNames.length ? ' is-open' : ''}`, 'aria-expanded': open ? 'true' : 'false', title: 'Scoreboard anzeigen' },
+          `STATS ${filled}/${rosterNames.length} ${open ? '▴' : '▾'}`);
+        toggle.addEventListener('click', () => { if (expanded.has(m.id)) expanded.delete(m.id); else expanded.add(m.id); render(); });
+        const mine = myStats(m.id);
+        const myBtn = inTeam ? h('button', { type: 'button', class: `btn btn--small ${mine ? 'btn--ghost' : 'btn--primary'}` }, mine ? 'MEINE STATS ÄNDERN' : 'MEINE STATS EINTRAGEN') : null;
+        if (myBtn) myBtn.addEventListener('click', () => openStats(m, mine));
+        return h('li', { class: `cnt-log__item ${RESULT[m.result].cls}`, dataset: { match: String(m.id) } },
+          h('div', { class: 'cnt-log__row' },
+            h('span', { class: 'cnt-log__badge', text: RESULT[m.result].short }),
+            h('span', { class: 'cnt-log__main' },
+              h('b', { text: RESULT[m.result].label }),
+              m.map ? h('span', { class: 'cnt-log__map', text: ` // ${m.map}` }) : null),
+            h('span', { class: 'cnt-log__score', text: m.score_us !== null && m.score_us !== undefined ? `${m.score_us}:${m.score_them}` : '' }),
+            h('span', { class: 'cnt-log__time', text: timeLabel(m.at_ms) }),
+            rosterNames.length ? toggle : null,
+            del),
+          open ? h('div', { class: 'cnt-log__board' }, scoreboard(team.roster, stats, m.id, me && me.username), myBtn) : null);
       })
     : h('li', { class: 'muted', text: editing ? 'Erstes Match oben eintragen.' : 'Noch keine Matches eingetragen.' }));
+
+  // Hinweis im Team-Editor: welche Namen haben (noch) keinen Account?
+  const known = new Set(accounts.map((a) => norm(a.username)));
+  const missing = rosterNames.filter((n) => !known.has(norm(n)));
+  el.rosterHint.textContent = missing.length
+    ? `Ohne Account (können keine Stats eintragen): ${missing.join(', ')}. Tipp: Namen aus den registrierten Accounts wählen.`
+    : 'Die Team-Spieler tragen ihre Stats nach jedem Match selbst ein (Login nötig).';
 
   // Editor-Felder mit Serverwerten füllen (nicht während des Tippens)
   if (editing) {
@@ -252,6 +302,60 @@ function render() {
     });
   }
   updateAddButtons();
+}
+
+// Banner oben: eigene offene Stats bzw. Login-Hinweis
+function renderMine(me, inTeam, pending) {
+  if (!me) {
+    mount(el.mine, h('p', { class: 'cnt-mine__hint' }, 'Team-Spieler: ', h('a', { href: './login.html?return=counter.html' }, 'EINLOGGEN'), ' und die eigenen CS-Stats nach jedem Match eintragen.'));
+    return;
+  }
+  if (!inTeam) {
+    mount(el.mine, h('p', { class: 'cnt-mine__hint', text: `Eingeloggt als ${me.username} – nicht im 5er-Team, daher keine Stats-Eingabe.` }));
+    return;
+  }
+  if (!pending.length) {
+    mount(el.mine, h('p', { class: 'cnt-mine__hint is-ok', text: `${me.username}: alle deine Stats sind eingetragen. ✓` }));
+    return;
+  }
+  const next = pending[0];
+  const btn = h('button', { type: 'button', class: 'btn btn--primary' }, `JETZT EINTRAGEN: ${RESULT[next.result].label}${next.map ? ` // ${next.map}` : ''}${next.score_us !== null && next.score_us !== undefined ? ` ${next.score_us}:${next.score_them}` : ''}`);
+  btn.addEventListener('click', () => openStats(next, null));
+  mount(el.mine, h('div', { class: 'cnt-mine__todo' },
+    h('p', { class: 'eyebrow', text: `${me.username} // ${pending.length} ${pending.length === 1 ? 'MATCH' : 'MATCHES'} OHNE DEINE STATS` }),
+    btn));
+}
+
+function openStats(m, existing) {
+  const me = getAccount();
+  if (!me) { window.location.href = './login.html?return=counter.html'; return; }
+  statsDialog({
+    title: `MEINE STATS // ${RESULT[m.result].label}${m.map ? ` // ${m.map}` : ''}${m.score_us !== null && m.score_us !== undefined ? ` ${m.score_us}:${m.score_them}` : ''}`,
+    existing,
+    onSubmit: async (v, setError) => {
+      try {
+        state = await rpc('counter_submit_stats', {
+          p_token: me.token, p_match_id: m.id, p_kills: v.kills, p_deaths: v.deaths, p_assists: v.assists,
+          p_hs_pct: v.hs, p_adr: v.adr, p_mvps: v.mvps,
+        });
+        expanded.add(m.id);
+        render();
+        toast('STATS GESPEICHERT');
+        return true;
+      } catch (e) {
+        if (e.code === 'ACCOUNT_UNAUTHORIZED') { clearAccount(); setError('LOGIN ABGELAUFEN – BITTE NEU EINLOGGEN'); return false; }
+        setError(e.code === 'NOT_IN_TEAM' ? 'DU BIST NICHT IM 5ER-TEAM' : errorText(e.code));
+        return false;
+      }
+    },
+  });
+}
+
+async function loadAccounts() {
+  try {
+    accounts = await rpc('accounts_public');
+    mount(el.accountList, accounts.map((a) => h('option', { value: a.username })));
+  } catch { /* egal */ }
 }
 
 // Mit Score: nur der passende Ergebnis-Button ist aktiv

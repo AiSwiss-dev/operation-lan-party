@@ -2,7 +2,7 @@
 
 Multiplayer-Quiz für die LAN-Party / den Geburtstag von **njorgiBiceps** am **14.11.2026, 14:00 Uhr**.
 
-Die Startseite bietet drei Bereiche: **01 QUIZ**, **02 GAME COUNTER** (Team-Bilanz eures 5er-Teams) und **03 BRACKET** (1v1-Turnier für 5 Operatoren) – siehe [Game Counter & Bracket](#game-counter--bracket).
+Die Startseite bietet drei Bereiche: **01 QUIZ**, **02 GAME COUNTER** (Team-Bilanz + CS-Stats eures 5er-Teams) und **03 BRACKET** (1v1-Turnier) – siehe [Game Counter & Bracket](#game-counter--bracket). Dazu kommen ein **Operator-Login** für alle Bereiche und **MISSION OPS** (Anwesenheit, Hold-Screen) für den Commander – siehe [Login, Mission Ops & Hold-Screen](#login-mission-ops--hold-screen).
 
 Der Host (du) zeigt **MISSION CONTROL** auf PC, TV oder Beamer. Die Gäste scannen einen QR-Code, wählen einen Callsign und spielen auf dem Smartphone mit – ohne App, einfach im Browser. 20 Counter-Strike-2-Fragen in zwei Phasen, synchronisierter Countdown, Punkte live, Zwischenranking, Siegerpodium, **TOP OPERATOR**, **MISSION ACCOMPLISHED**.
 
@@ -83,6 +83,10 @@ Beispiel: 15 Sekunden übrig → 100 + 15 × 5 = **175 Punkte**. Da eine Antwort
 | `counter.html` + `js/counter.js` | Game Counter (Team-Bilanz) |
 | `bracket.html` + `js/bracket.js` | 1v1-Bracket |
 | `js/commander.js` | Commander-Login für Counter und Bracket |
+| `login.html` + `js/login.js`, `js/account.js` | Operator-Login, Registrierung, Profil |
+| `commander.html` + `js/ops.js` | MISSION OPS: Anwesenheit/Check-in, Accounts, Hold-Screen |
+| `js/gate.js` | Hold-Screen (STANDBY bis alle eingecheckt sind) |
+| `js/stats.js` | CS-Stats: Leaderboard, Match-Scoreboard, Eingabe |
 | `css/style.css` | Komplettes Design (Farben ganz oben) |
 | `js/player.js` | Logik der Spieler-Seite |
 | `js/host.js` | Logik von MISSION CONTROL |
@@ -247,6 +251,8 @@ https://DEIN-GITHUB-NAME.github.io/operation-lan-party/
 | Quiz – Host | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/host.html` |
 | Game Counter | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/counter.html` |
 | Bracket | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/bracket.html` |
+| Login / Profil | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/login.html` |
+| Mission Ops (Commander) | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/commander.html` |
 
 Alte Links der Form `…/operation-lan-party/?game=CODE` werden automatisch zum Quiz weitergeleitet.
 
@@ -310,7 +316,31 @@ Beide Bereiche sind unabhängig vom Quiz, laufen aber über dieselbe Supabase-Da
 * **NEU AUSLOSEN** (neue Paarungen, Resultate weg), **RESULTATE LÖSCHEN** (Paarungen bleiben), **SPIELER ÄNDERN** (zurück zum Setup).
 * Auf TV/Beamer passt alles auf einen Bildschirm (1920×1080), auf dem Handy untereinander.
 
-> Neu dazugekommen? Dann im SQL Editor einmal `supabase/update-counter-bracket.sql` ausführen (oder `schema.sql` erneut komplett) – das legt die Tabellen für Counter und Turnier an. Quiz-Daten und Passwort bleiben erhalten.
+> Neu dazugekommen? Dann im SQL Editor einmal `supabase/update-counter-bracket.sql` ausführen (oder `schema.sql` erneut komplett) – das legt die Tabellen für Counter, CS-Stats, Turnier, Accounts und Hold-Screen an. Quiz-Daten und Passwort bleiben erhalten.
+
+### Login, Mission Ops & Hold-Screen
+
+**Operator-Login (`login.html`)** – ein Account (Benutzername + Passwort) gilt für alles:
+
+* **Quiz:** Eingeloggt erscheint auf der Quiz-Seite **ALS [NAME] BEITRETEN** – ohne QR-Code und ohne Mission Code, Callsign = Benutzername. Funktioniert auch auf mehreren Geräten und zum Wiedereinsteigen in eine laufende Mission. Gäste ohne Account nutzen weiter QR-Code bzw. Code + Callsign.
+* **Game Counter:** Der Commander trägt das 5er-Team mit den **Benutzernamen** ein (Vorschläge aus den Accounts). Nach jedem Match trägt **jeder Spieler seine eigenen Stats** ein: Kills, Assists, Deaths, HS %, ADR, MVPs (**MEINE STATS EINTRAGEN** bzw. Banner oben). Daraus entstehen das **Squad Leaderboard** (sortierbar: K/D, ADR, HS % …) und ein **Scoreboard pro Match** (**STATS 3/5 ▾**).
+* **Bracket:** Beim Setup Accounts antippen oder **EINGECHECKTE ÜBERNEHMEN**; der eigene Name ist grün markiert.
+* **Profil:** Check-in-Status, aktuelle Quiz-Mission, eigene CS-Stats + offene Matches, Bracket-Teilnahme.
+* Accounts kann jeder selbst anlegen (**NEU HIER? ACCOUNT ERSTELLEN**) oder der Commander vorab in MISSION OPS. Nach 8 falschen Passwörtern ist der Login 5 Minuten gesperrt; der Commander kann Passwörter zurücksetzen.
+
+**MISSION OPS (`commander.html`, nur Commander)**
+
+* **Anwesenheit:** Liste aller Operatoren mit **EINCHECKEN / ✓ ON SITE**, ONLINE-Anzeige (in den letzten 2–3 Minuten auf der Seite), Badges TEAM / BRACKET / QUIZ / STATS OFFEN. **Einchecken kann nur der Commander.** **ALLE EINCHECKEN / ALLE AUSCHECKEN** für alle auf einmal.
+* Accounts **vorab anlegen**, **Passwort zurücksetzen**, **löschen**.
+* Überblick: ON SITE x/y, Online, laufende Quiz-Mission, Hold-Screen-Status.
+
+**Hold-Screen**
+
+* In MISSION OPS **HOLD-SCREEN AKTIVIEREN** → Startseite, Quiz, Game Counter und Bracket zeigen allen den **STANDBY**-Bildschirm (z. B. **3 / 10 OPERATORS ON SITE** mit Namensliste).
+* Sobald der Commander **alle** registrierten Operatoren eingecheckt hat, wird die Seite **automatisch und live auf allen Geräten freigegeben** (**MISSION UNLOCKED**). Danach bleibt sie offen, auch wenn jemand ausgecheckt wird.
+* **MISSION JETZT FREIGEBEN** gibt sofort frei (z. B. wenn jemand nicht kommt – oder dessen Account löschen).
+* Login, MISSION CONTROL und MISSION OPS bleiben während des Holds erreichbar.
+* Hinweis: Der Hold-Screen ist eine Sperre der Oberfläche für die Party, keine Datensperre.
 
 ---
 
@@ -438,7 +468,9 @@ Alle bestehenden Host-Logins werden dabei abgemeldet. Nach 15 falschen Passwört
 | Service-Role-Key im Browser | Wird von App und Workflow erkannt und blockiert. |
 | Manipulierte Uhr am Handy | Countdown basiert auf der Serverzeit (Messung des Versatzes), Deadline prüft der Server. |
 
-**Was öffentlich lesbar ist:** Tabelle `games` (Code, Status, aktuelle Frage, Zeiten) und `players` (Callsign, Punkte, ob geantwortet). Das ist für Lobby-Liste und Realtime nötig und enthält keine Geheimnisse. Wer den anon Key nutzt, könnte theoretisch Mission Codes auflisten und einer Lobby beitreten – für eine private Party unkritisch; der Host kann Fremde in der Lobby entfernen.
+**Accounts:** Passwörter nur als bcrypt-Hash, Tabellen `accounts`/`account_sessions` für den Browser komplett gesperrt; Login-Sperre nach 8 Fehlversuchen; CS-Stats kann nur der eingeloggte Spieler selbst eintragen (und nur, wenn er im 5er-Team ist); Check-in nur mit Commander-Token.
+
+**Was öffentlich lesbar ist:** Tabelle `games` (Code, Status, aktuelle Frage, Zeiten) und `players` (Callsign, Punkte, ob geantwortet), außerdem Game Counter, CS-Stats, Turnier und der Hold-Status – sowie die Liste der Benutzernamen (ohne Passwörter). Das ist für Lobby-Liste und Realtime nötig und enthält keine Geheimnisse. Wer den anon Key nutzt, könnte theoretisch Mission Codes auflisten und einer Lobby beitreten – für eine private Party unkritisch; der Host kann Fremde in der Lobby entfernen.
 
 **Grenzen:** Ein Spieler mit zwei Handys kann zwei Callsigns anlegen. Das ist bei einem Party-Quiz ohne Konten nicht zu verhindern – der Host sieht aber alle Namen in der Lobby.
 
@@ -505,6 +537,7 @@ Mindestens **ein paar Tage vorher** (kostenlose Supabase-Projekte pausieren nach
 
 ### Getestet
 
+* Accounts, Quiz-Login, CS-Stats, Mission Ops, Hold-Screen: **58 Datenbank-Prüfungen** (Rechte, kein Selbst-Check-in, Login-Sperre, Mehrgeräte-Beitritt, nur Team-Spieler dürfen Stats eintragen, automatische Freigabe) und **34 Browser-Prüfungen** (Registrierung → Commander checkt ein → Hold-Screen gibt live frei → Quiz ohne Code → Stats durch die Spieler → Leaderboard → Bracket-Übernahme).
 * Game Counter + Bracket: **55 Datenbank-Prüfungen** (Rechte, Validierung, Score→Ergebnis, Auslosung für 4–8 Spieler: jeder genau 2×, keine Doppel-Paarung, niemand zweimal hintereinander) und **42 Browser-Prüfungen** (Startseite, Commander + Live-Zuschauer, Quali-Rangliste, Halbfinale 1–4/2–3, Platz 3, Endstand, TV-Darstellung 1920×1080 ohne Scrollen).
 * `schema.sql` mit echtem PostgreSQL (PGlite) als `anon`-Rolle: **154 Prüfungen** – RLS, Rechte, Deadline + Kulanz, Doppelantwort, Punkte (175 bei 15 s, max. 195), Phasenwechsel, Finale, Brute-Force-Sperre, Manipulationsversuche, mehrfaches Ausführen des Scripts.
 * Kompletter Ablauf im echten Browser (Chrome headless), App unter dem Unterpfad `/operation-lan-party/` wie bei GitHub Pages, Server-Funktionen aus dem echten `schema.sql`: Host + 10 Spieler, alle 20 Fragen, QR-Code-Dekodierung, doppelter/HTML-Callsign, Reload, zweiter Tab, direkter API-Doppel-Submit, Doppelklicks, spätes Beitreten, Kicken, Verbindungsabbruch + Reconnect, Host-Reload, Zwischenranking, Finale, Tie-Breaker, CSV-Export, Reset; Darstellung bei 320/375/390/430/768 px sowie 1280×720, 1600×900, 1920×1080. **105 Prüfungen mit nachgebildetem Supabase-Realtime** (Event-Laufzeit ~0,2 s) und **100 Prüfungen mit blockiertem Realtime** (reiner Fallback).

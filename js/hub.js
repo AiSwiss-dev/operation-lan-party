@@ -4,7 +4,13 @@
 //  weitergeleitet, damit bereits gedruckte QR-Codes weiter funktionieren.
 // =====================================================================
 
+import { startHeartbeat } from './account.js';
+import { initGate } from './gate.js';
+
 const params = new URLSearchParams(window.location.search);
 if (params.has('game')) {
   window.location.replace(`./quiz.html${window.location.search}`);
+} else {
+  startHeartbeat();
+  initGate();
 }
