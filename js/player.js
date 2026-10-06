@@ -174,7 +174,7 @@ function renderJoin({ code = '', callsign = '', error = '' } = {}) {
     h('section', { class: 'card card--briefing' },
       stamp('CLASSIFIED'),
       h('p', { class: 'eyebrow', text: TEXT.org }),
-      h('h1', { class: 'title title--xl' }, 'OPERATION', h('br'), 'LAN-PARTY'),
+      h('h1', { class: 'title title--xl' }, 'OPERATION', h('br'), 'LAN PARTY'),
       h('p', { class: 'subtitle', text: TEXT.subtitle }),
       h('div', { class: 'stripes', 'aria-hidden': 'true' }),
       h('p', { class: 'meta', text: `${TEXT.eventDate} // ${TEXT.eventTime} UHR // COMMANDER ${TEXT.commander}` }),

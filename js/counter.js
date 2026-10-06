@@ -83,7 +83,7 @@ function buildSkeleton() {
   mount(app,
     h('section', { class: 'card cnt-hero' },
       stamp('CLASSIFIED'),
-      h('p', { class: 'eyebrow', text: '5-MAN SQUAD // CS2 COMPETITIVE // NJORGIBICEPS' }),
+      h('p', { class: 'eyebrow', text: '5-MAN SQUAD // CS2 COMPETITIVE // OPERATION LAN PARTY' }),
       el.teamName,
       el.roster,
       h('div', { class: 'stripes', 'aria-hidden': 'true' }),

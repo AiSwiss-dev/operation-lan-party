@@ -1,5 +1,5 @@
 // =====================================================================
-//  OPERATION LAN-PARTY – Konfiguration (Vorlage)
+//  OPERATION LAN PARTY – Konfiguration (Vorlage)
 // =====================================================================
 //
 //  1. Diese Datei kopieren nach:   js/config.js

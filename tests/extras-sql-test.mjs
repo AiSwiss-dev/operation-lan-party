@@ -19,7 +19,7 @@ async function anonSql(q) {
 
 // ---- Öffentliches Lesen / gesperrtes Schreiben -------------------------------------
 let r = await anon(db, 'counter_state', {});
-ok(r.data && r.data.team.name === 'NJORGIBICEPS SQUAD' && r.data.team.roster.length === 5 && r.data.totals.wins === 0, 'counter_state default', r);
+ok(r.data && r.data.team.name === 'LAN PARTY SQUAD' && r.data.team.roster.length === 5 && r.data.totals.wins === 0, 'counter_state default', r);
 r = await anon(db, 'tournament_state', {});
 ok(r.data && r.data.players.length === 0 && r.data.pairs.length === 0 && r.data.ko_scores.length === 8, 'tournament_state default', r);
 ok((await anonSql('select * from counter_matches')).rows !== undefined, 'anon can read counter_matches (realtime)');

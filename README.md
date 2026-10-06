@@ -1,6 +1,6 @@
-# OPERATION LAN-PARTY // CS2 EINSATZPRÜFUNG
+# OPERATION LAN PARTY // CS2 EINSATZPRÜFUNG
 
-Multiplayer-Quiz für die LAN-Party / den Geburtstag von **njorgiBiceps** am **14.11.2026, 14:00 Uhr**.
+Multiplayer-Quiz, Game Counter und Turnier für die **OPERATION LAN PARTY** am **14.11.2026, 14:00 Uhr**. Commander-Account: **havoc**.
 
 Die Startseite bietet drei Bereiche: **01 QUIZ**, **02 GAME COUNTER** (Team-Bilanz + CS-Stats eures 5er-Teams) und **03 BRACKET** (1v1-Turnier) – siehe [Game Counter & Bracket](#game-counter--bracket). Dazu kommen ein **Operator-Login** für alle Bereiche und **MISSION OPS** (Anwesenheit, Hold-Screen) für den Commander – siehe [Login, Mission Ops & Hold-Screen](#login-mission-ops--hold-screen).
 
@@ -10,7 +10,7 @@ Der Host (du) zeigt **MISSION CONTROL** auf PC, TV oder Beamer. Die Gäste scann
 
 ## Inhalt
 
-1. [Was ist OPERATION LAN-PARTY?](#1-was-ist-operation-lan-party)
+1. [Was ist OPERATION LAN PARTY?](#1-was-ist-operation-lan-party)
 2. [Die Komponenten](#2-die-komponenten)
 3. [Einrichtung Schritt für Schritt](#3-einrichtung-schritt-für-schritt)
 4. [Am Partytag](#4-am-partytag)
@@ -24,7 +24,7 @@ Der Host (du) zeigt **MISSION CONTROL** auf PC, TV oder Beamer. Die Gäste scann
 
 ---
 
-## 1. Was ist OPERATION LAN-PARTY?
+## 1. Was ist OPERATION LAN PARTY?
 
 Eine Quiz-Web-App im Stil einer taktischen Special-Operations-Mission:
 
@@ -328,6 +328,8 @@ Beide Bereiche sind unabhängig vom Quiz, laufen aber über dieselbe Supabase-Da
 * **Profil:** Check-in-Status, aktuelle Quiz-Mission, eigene CS-Stats + offene Matches, Bracket-Teilnahme.
 * Accounts kann jeder selbst anlegen (**NEU HIER? ACCOUNT ERSTELLEN**) oder der Commander vorab in MISSION OPS. Nach 8 falschen Passwörtern ist der Login 5 Minuten gesperrt; der Commander kann Passwörter zurücksetzen.
 
+**Commander-Account `havoc`:** wird automatisch angelegt und hat **dasselbe Passwort wie MISSION CONTROL** (`set_commander_password`). Mit havoc eingeloggt bist du gleichzeitig Commander (MISSION OPS, MISSION CONTROL, Bearbeiten in Counter/Bracket) und normaler Spieler (Quiz, eigene Stats, Bracket). havoc ist immer „vor Ort“ und zählt beim Check-in nicht mit.
+
 **MISSION OPS (`commander.html`, nur Commander)**
 
 * **Anwesenheit:** Liste aller Operatoren mit **EINCHECKEN / ✓ ON SITE**, ONLINE-Anzeige (in den letzten 2–3 Minuten auf der Seite), Badges TEAM / BRACKET / QUIZ / STATS OFFEN. **Einchecken kann nur der Commander.** **ALLE EINCHECKEN / ALLE AUSCHECKEN** für alle auf einmal.
@@ -336,10 +338,13 @@ Beide Bereiche sind unabhängig vom Quiz, laufen aber über dieselbe Supabase-Da
 
 **Hold-Screen**
 
-* In MISSION OPS **HOLD-SCREEN AKTIVIEREN** → Startseite, Quiz, Game Counter und Bracket zeigen allen den **STANDBY**-Bildschirm (z. B. **3 / 10 OPERATORS ON SITE** mit Namensliste).
+* Der Hold-Screen ist der **Start-Bildschirm** und bei neuer Einrichtung **automatisch aktiv**. Solange er aktiv ist, kann **niemand etwas tun**: kein Login, keine Registrierung, kein Quiz-Beitritt, keine Stats – auch der Server lehnt das ab. Alle sehen **STANDBY** mit **x / y OPERATORS ON SITE** und der Namensliste.
+* Ablauf: Du legst in MISSION OPS die Accounts der Spieler an (Name + Passwort weitergeben) und checkst jeden ein, wenn er da ist.
+* Du selbst kommst immer durch: unten auf dem Hold-Screen **COMMANDER** antippen und als **havoc** einloggen (oder direkt MISSION OPS / MISSION CONTROL öffnen). Du siehst dann einen Hinweisbalken.
+* Ein-/Ausschalten in MISSION OPS: **HOLD-SCREEN AKTIVIEREN / AUSSCHALTEN**.
 * Sobald der Commander **alle** registrierten Operatoren eingecheckt hat, wird die Seite **automatisch und live auf allen Geräten freigegeben** (**MISSION UNLOCKED**). Danach bleibt sie offen, auch wenn jemand ausgecheckt wird.
 * **MISSION JETZT FREIGEBEN** gibt sofort frei (z. B. wenn jemand nicht kommt – oder dessen Account löschen).
-* Login, MISSION CONTROL und MISSION OPS bleiben während des Holds erreichbar.
+* MISSION CONTROL und MISSION OPS bleiben für den Commander erreichbar; die Login-Seite ist für Spieler gesperrt.
 * Hinweis: Der Hold-Screen ist eine Sperre der Oberfläche für die Party, keine Datensperre.
 
 ---

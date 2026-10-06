@@ -41,7 +41,7 @@ try {
   const view = await B.newPage('counter-view', { width: 390, height: 844 });
   await cmd.goto(B.SITE + 'counter.html');
   await view.goto(B.SITE + 'counter.html');
-  await view.waitForFunction(() => document.querySelector('.cnt-team')?.textContent === 'NJORGIBICEPS SQUAD');
+  await view.waitForFunction(() => document.querySelector('.cnt-team')?.textContent === 'LAN PARTY SQUAD');
   check(await view.isHidden('.cnt-editor'), 'viewer: no editor');
   check((await view.$$('#cmd-area button:text("COMMANDER LOGIN")')).length === 1, 'viewer: login button');
   await login(cmd);
@@ -50,7 +50,7 @@ try {
   // Team
   await cmd.click('.cnt-team-edit summary');
   await cmd.fill('#cnt-team', 'Njorgi Squad');
-  const roster = ['njorgiBiceps', 'HeadshotHans', 'RushB', 'AWP_Gott', 'FlashMeister'];
+  const roster = ['havoc', 'HeadshotHans', 'RushB', 'AWP_Gott', 'FlashMeister'];
   const rosterInputs = await cmd.$$('.cnt-roster-inputs input');
   for (let i = 0; i < 5; i++) await rosterInputs[i].fill(roster[i]);
   await cmd.click('button:text("TEAM SPEICHERN")');

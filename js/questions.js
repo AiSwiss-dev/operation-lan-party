@@ -29,10 +29,10 @@ export const RANKS = [
 ];
 
 export const TEXT = {
-  org: 'NJORGIBICEPS // SPECIAL OPERATIONS',
-  title: 'OPERATION LAN-PARTY',
+  org: 'OPERATION LAN PARTY // SPECIAL OPERATIONS',
+  title: 'OPERATION LAN PARTY',
   subtitle: 'CS2 EINSATZPRÜFUNG',
-  commander: 'njorgiBiceps',
+  commander: 'havoc',
   eventDate: '14.11.2026',
   eventTime: '14:00',
 };

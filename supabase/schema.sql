@@ -931,11 +931,14 @@ end $$;
 -- Team (eine Zeile): Name + 5 Operatoren
 create table if not exists public.counter_team (
   id         int primary key default 1 check (id = 1),
-  name       text not null default 'NJORGIBICEPS SQUAD' check (char_length(name) between 1 and 32),
+  name       text not null default 'LAN PARTY SQUAD' check (char_length(name) between 1 and 32),
   roster     text[] not null default array['', '', '', '', '']::text[],
   updated_at timestamptz not null default now()
 );
 insert into public.counter_team (id) values (1) on conflict (id) do nothing;
+-- Branding: alten Standardnamen ersetzen, falls nie geändert
+update public.counter_team set name = 'LAN PARTY SQUAD' where name = 'NJORGIBICEPS SQUAD';
+alter table public.counter_team alter column name set default 'LAN PARTY SQUAD';
 
 -- Jedes gespielte Match = eine Zeile
 create table if not exists public.counter_matches (
@@ -995,8 +998,10 @@ create table if not exists public.accounts (
   failed_logins       int not null default 0,
   locked_until        timestamptz,
   created_at          timestamptz not null default now(),
-  last_seen           timestamptz
+  last_seen           timestamptz,
+  is_commander        boolean not null default false
 );
+alter table public.accounts add column if not exists is_commander boolean not null default false;
 
 create table if not exists public.account_sessions (
   token_hash text primary key,
@@ -1012,11 +1017,13 @@ alter table public.players add column if not exists account_id uuid references p
 alter table public.player_tokens drop constraint if exists player_tokens_pkey;
 create index if not exists player_tokens_player_idx on public.player_tokens (player_id);
 
--- Hold-Screen: solange aktiv und nicht alle eingecheckt sind, zeigt die
--- Webseite allen einen STANDBY-Bildschirm (eine Zeile, öffentlich lesbar)
+-- Hold-Screen (Start-Bildschirm): solange aktiv und nicht alle Operatoren
+-- eingecheckt sind, ist die Webseite für alle gesperrt – kein Login, kein
+-- Quiz-Beitritt, keine Stats. Nur der Commander kann arbeiten.
+-- Standard bei neuer Einrichtung: AKTIV.
 create table if not exists public.site_state (
   id           int primary key default 1 check (id = 1),
-  hold_enabled boolean not null default false,
+  hold_enabled boolean not null default true,
   released     boolean not null default false,
   updated_at   timestamptz not null default now()
 );
@@ -1322,13 +1329,56 @@ as $$
    order by g.created_at desc limit 1
 $$;
 
--- Hold-Screen automatisch freigeben, sobald alle eingecheckt sind
+-- Benutzername des Commander-Accounts (Passwort = Commander-Passwort)
+create or replace function public._commander_username()
+returns text language sql immutable set search_path = ''
+as $$ select 'havoc'::text $$;
+
+-- Ist die Webseite freigegeben (kein Hold-Screen)?
+create or replace function public._site_open()
+returns boolean language sql stable set search_path = ''
+as $$ select coalesce((select (not hold_enabled) or released from public.site_state where id = 1), true) $$;
+
+-- Commander-Account anlegen bzw. aktualisieren (gleiches Passwort wie MISSION CONTROL,
+-- immer eingecheckt). Wird beim Setzen des Commander-Passworts aufgerufen.
+create or replace function public._ensure_commander_account()
+returns void language plpgsql volatile set search_path = ''
+as $$
+declare v_hash text;
+begin
+  select password_hash into v_hash from public.commander_config where id = 1;
+  if v_hash is null then return; end if;
+  insert into public.accounts (username, username_normalized, password_hash, is_commander, checked_in, checked_in_at)
+  values (public._commander_username(), public._norm(public._commander_username()), v_hash, true, true, now())
+  on conflict (username_normalized) do update
+     set password_hash = excluded.password_hash, is_commander = true, checked_in = true,
+         checked_in_at = coalesce(public.accounts.checked_in_at, now()), failed_logins = 0, locked_until = null;
+end $$;
+
+-- Gäste-Beitritt zum Quiz während des Holds verhindern (gilt auch für join_game)
+create or replace function public._players_hold_guard()
+returns trigger language plpgsql set search_path = ''
+as $$
+begin
+  if not public._site_open()
+     and not exists (select 1 from public.accounts a where a.id = new.account_id and a.is_commander) then
+    raise exception 'SITE_ON_HOLD';
+  end if;
+  return new;
+end $$;
+drop trigger if exists players_hold_guard on public.players;
+create trigger players_hold_guard before insert on public.players
+  for each row execute function public._players_hold_guard();
+
+-- Hold-Screen automatisch freigeben, sobald alle Operatoren (ohne Commander)
+-- eingecheckt sind
 create or replace function public._refresh_site()
 returns void language plpgsql volatile set search_path = ''
 as $$
 declare v_total int; v_checked int;
 begin
-  select count(*), count(*) filter (where checked_in) into v_total, v_checked from public.accounts;
+  select count(*), count(*) filter (where checked_in) into v_total, v_checked
+    from public.accounts where not is_commander;
   update public.site_state
      set released = released or (hold_enabled and v_total > 0 and v_checked = v_total),
          updated_at = now()
@@ -1344,6 +1394,7 @@ returns jsonb language plpgsql volatile security definer set search_path = ''
 as $$
 declare v_name text; v_id uuid;
 begin
+  if not public._site_open() then raise exception 'SITE_ON_HOLD'; end if;
   v_name := public._clean_label(p_username, 24);
   if char_length(v_name) < 2 then raise exception 'NAME_LENGTH'; end if;
   if p_password is null or char_length(p_password) < 4 or char_length(p_password) > 64 then
@@ -1365,7 +1416,7 @@ end $$;
 create or replace function public.account_login(p_username text, p_password text)
 returns jsonb language plpgsql volatile security definer set search_path = ''
 as $$
-declare a public.accounts;
+declare a public.accounts; v_host text;
 begin
   select * into a from public.accounts where username_normalized = public._norm(p_username);
   if not found then return jsonb_build_object('ok', false, 'error', 'LOGIN_FAILED'); end if;
@@ -1380,7 +1431,16 @@ begin
     return jsonb_build_object('ok', false, 'error', 'LOGIN_FAILED');
   end if;
   update public.accounts set failed_logins = 0, locked_until = null, last_seen = now() where id = a.id;
-  return jsonb_build_object('ok', true, 'token', public._account_session(a.id), 'username', a.username);
+  if not a.is_commander and not public._site_open() then
+    return jsonb_build_object('ok', false, 'error', 'SITE_ON_HOLD');
+  end if;
+  if a.is_commander then
+    v_host := public._new_token();
+    delete from public.host_sessions where expires_at < now();
+    insert into public.host_sessions (token_hash, expires_at) values (public._sha256(v_host), now() + interval '48 hours');
+  end if;
+  return jsonb_build_object('ok', true, 'token', public._account_session(a.id), 'username', a.username,
+                            'commander', a.is_commander, 'host_token', v_host);
 end $$;
 
 create or replace function public.account_logout(p_token text)
@@ -1406,6 +1466,8 @@ begin
   v_roster := public._in_roster(a.username_normalized);
   return jsonb_build_object(
     'username', a.username,
+    'commander', a.is_commander,
+    'site_open', public._site_open(),
     'checked_in', a.checked_in,
     'created_at_ms', public._ms(a.created_at),
     'quiz', case when g.id is null then null else jsonb_build_object(
@@ -1447,11 +1509,11 @@ as $$
     'hold_enabled', s.hold_enabled,
     'released', s.released,
     'open', (not s.hold_enabled) or s.released,
-    'total', (select count(*) from public.accounts),
-    'checked_in', (select count(*) from public.accounts where checked_in),
+    'total', (select count(*) from public.accounts where not is_commander),
+    'checked_in', (select count(*) from public.accounts where checked_in and not is_commander),
     'operators', (select coalesce(jsonb_agg(jsonb_build_object('username', a.username, 'checked_in', a.checked_in)
                                             order by a.checked_in desc, a.username_normalized), '[]'::jsonb)
-                    from public.accounts a))
+                    from public.accounts a where not a.is_commander))
   from public.site_state s where s.id = 1
 $$;
 
@@ -1470,6 +1532,7 @@ declare
   v_ptoken text := public._new_token();
 begin
   a := public._account_auth(p_token);
+  if not a.is_commander and not public._site_open() then raise exception 'SITE_ON_HOLD'; end if;
   if v_code <> '' then
     if v_code !~ '^[0-9]{6}$' then raise exception 'MISSION_CODE_INVALID'; end if;
     select * into g from public.games where code = v_code for share;
@@ -1519,6 +1582,7 @@ as $$
 declare a public.accounts;
 begin
   a := public._account_auth(p_token);
+  if not a.is_commander and not public._site_open() then raise exception 'SITE_ON_HOLD'; end if;
   if not exists (select 1 from public.counter_matches where id = p_match_id) then raise exception 'NOT_FOUND'; end if;
   if not public._in_roster(a.username_normalized) then raise exception 'NOT_IN_TEAM'; end if;
   if p_kills is null or p_deaths is null or p_assists is null or p_hs_pct is null or p_adr is null
@@ -1553,7 +1617,7 @@ begin
               'code', g.code, 'status', g.status, 'current_question', g.current_question,
               'player_count', (select count(*) from public.players where game_id = g.id)) end,
     'accounts', coalesce((select jsonb_agg(jsonb_build_object(
-        'id', a.id, 'username', a.username, 'checked_in', a.checked_in,
+        'id', a.id, 'username', a.username, 'checked_in', a.checked_in, 'commander', a.is_commander,
         'checked_in_at_ms', public._ms(a.checked_in_at), 'last_seen_ms', public._ms(a.last_seen),
         'created_at_ms', public._ms(a.created_at), 'locked', a.locked_until is not null and a.locked_until > now(),
         'in_roster', public._in_roster(a.username_normalized),
@@ -1575,7 +1639,7 @@ begin
   update public.accounts
      set checked_in = coalesce(p_checked, false),
          checked_in_at = case when coalesce(p_checked, false) then coalesce(checked_in_at, now()) else null end
-   where id = p_account_id;
+   where id = p_account_id and not is_commander;
   perform public._refresh_site();
   return public.ops_state(p_token);
 end $$;
@@ -1589,7 +1653,7 @@ begin
   update public.accounts
      set checked_in = coalesce(p_checked, false),
          checked_in_at = case when coalesce(p_checked, false) then coalesce(checked_in_at, now()) else null end
-   where true;
+   where not is_commander;
   perform public._refresh_site();
   return public.ops_state(p_token);
 end $$;
@@ -1621,6 +1685,7 @@ as $$
 begin
   perform public._require_host(p_token);
   if p_password is null or char_length(p_password) < 4 or char_length(p_password) > 64 then raise exception 'PASSWORD_INVALID'; end if;
+  if exists (select 1 from public.accounts where id = p_account_id and is_commander) then raise exception 'COMMANDER_ACCOUNT'; end if;
   update public.accounts
      set password_hash = extensions.crypt(p_password, extensions.gen_salt('bf', 8)), failed_logins = 0, locked_until = null
    where id = p_account_id;
@@ -1633,6 +1698,7 @@ returns jsonb language plpgsql volatile security definer set search_path = ''
 as $$
 begin
   perform public._require_host(p_token);
+  if exists (select 1 from public.accounts where id = p_account_id and is_commander) then raise exception 'COMMANDER_ACCOUNT'; end if;
   delete from public.accounts where id = p_account_id;
   perform public._refresh_site();
   return public.ops_state(p_token);
@@ -1661,6 +1727,34 @@ begin
   return public.ops_state(p_token);
 end $$;
 
+
+
+-- ---------------------------------------------------------------------
+-- Commander-Passwort setzen (überschreibt die Version aus Abschnitt 6):
+-- zusätzlich wird der Commander-Account "havoc" mit demselben Passwort
+-- angelegt bzw. aktualisiert. Nur im SQL Editor ausführbar.
+-- ---------------------------------------------------------------------
+create or replace function public.set_commander_password(p_password text)
+returns text language plpgsql volatile security definer set search_path = ''
+as $$
+begin
+  if p_password is null or char_length(p_password) < 8 then
+    raise exception 'Das Commander-Passwort muss mindestens 8 Zeichen lang sein.';
+  end if;
+  if upper(p_password) in ('DEIN-GEHEIMES-PASSWORT', 'PASSWORT', 'PASSWORD', '12345678') then
+    raise exception 'Bitte ein eigenes Passwort wählen, nicht den Platzhalter.';
+  end if;
+  insert into public.commander_config (id, password_hash)
+  values (1, extensions.crypt(p_password, extensions.gen_salt('bf', 10)))
+  on conflict (id) do update set password_hash = excluded.password_hash, updated_at = now();
+  delete from public.host_sessions;   -- alte Logins ungültig machen
+  perform public._ensure_commander_account();
+  delete from public.account_sessions s using public.accounts a where s.account_id = a.id and a.is_commander;
+  return 'Commander-Passwort gesetzt (gilt auch für den Account havoc). Bestehende Commander-Logins wurden abgemeldet.';
+end $$;
+
+-- Commander-Account jetzt anlegen (falls das Commander-Passwort schon gesetzt ist)
+select public._ensure_commander_account();
 
 -- ---------------------------------------------------------------------
 -- RLS + Rechte für Counter, Turnier, Accounts, Stats, Hold-Screen
@@ -1702,6 +1796,8 @@ revoke all on function
   public._clean_label(text, int),
   public._norm(text), public._account_auth(text), public._account_session(uuid),
   public._in_roster(text), public._in_tournament(text), public._active_game(), public._refresh_site(),
+  public._commander_username(), public._site_open(), public._ensure_commander_account(), public._players_hold_guard(),
+  public.set_commander_password(text),
   public.account_register(text, text), public.account_login(text, text), public.account_logout(text),
   public.account_me(text, boolean), public.accounts_public(),
   public.site_status(), public.join_game_account(text, text),

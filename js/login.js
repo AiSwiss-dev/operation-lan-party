@@ -7,6 +7,8 @@ import { h, mount, errorText, toast } from './utils.js';
 import { renderConfigError, setNetBanner, stamp, coordLine } from './ui.js';
 import { getAccount, setAccount, clearAccount, fetchMe, renderAccountLink } from './account.js';
 import { TEXT } from './questions.js';
+import { initGate } from './gate.js';
+import { storage } from './utils.js';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(window.location.search);
@@ -17,6 +19,7 @@ let refreshTimer = null;
 async function init() {
   renderAccountLink();
   if (!configStatus.ok) { renderConfigError(app, configStatus); return; }
+  initGate();
   if (getAccount()) await showProfile();
   else renderAuth('login');
 }
@@ -52,6 +55,7 @@ function renderAuth(mode, message = '') {
         : await rpc('account_register', { p_username: user.value, p_password: pass.value });
       if (!res.ok) { error.textContent = res.error === 'LOGIN_FAILED' ? 'LOGIN FEHLGESCHLAGEN – NAME ODER PASSWORT FALSCH' : errorText(res.error); return; }
       setAccount(res.token, res.username);
+      if (res.host_token) storage.set('olp.host', { token: res.host_token });
       toast(isLogin ? `WILLKOMMEN ZURÜCK, ${res.username}` : `ACCOUNT ${res.username} ERSTELLT`);
       if (returnTo) { window.location.href = `./${returnTo}`; return; }
       await showProfile();
@@ -111,6 +115,7 @@ function renderProfile(me) {
     const a = getAccount();
     try { if (a) await rpc('account_logout', { p_token: a.token }); } catch { /* egal */ }
     clearAccount();
+    if (me.commander) storage.remove('olp.host');
     renderAuth('login');
   });
 
@@ -121,7 +126,10 @@ function renderProfile(me) {
       h('h1', { class: 'title title--xl profile__name', text: me.username }),
       h('p', { class: `profile__status${me.checked_in ? ' is-in' : ''}` },
         h('span', { class: 'led', 'aria-hidden': 'true' }),
-        me.checked_in ? 'EINGECHECKT – DU BIST VOR ORT' : 'NOCH NICHT EINGECHECKT – DER COMMANDER CHECKT DICH EIN'),
+        me.commander ? 'COMMANDER – IMMER VOR ORT' : me.checked_in ? 'EINGECHECKT – DU BIST VOR ORT' : 'NOCH NICHT EINGECHECKT – DER COMMANDER CHECKT DICH EIN'),
+      me.commander ? h('div', { class: 'ops-bulk' },
+        h('a', { class: 'btn btn--primary', href: './commander.html' }, 'MISSION OPS ▸'),
+        h('a', { class: 'btn btn--ghost', href: './host.html' }, 'MISSION CONTROL (QUIZ) ▸')) : null,
       returnTo ? h('a', { class: 'btn btn--primary btn--block', href: `./${returnTo}` }, 'WEITER ▸') : null,
       h('div', { class: 'stripes', 'aria-hidden': 'true' })),
 

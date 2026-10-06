@@ -5,7 +5,9 @@ import fs from 'node:fs';
 
 export const SCHEMA = new URL('../supabase/schema.sql', import.meta.url);
 
-export async function createDb() {
+// keepHold: Hold-Screen so lassen, wie ihn das Schema anlegt (Standard: AKTIV).
+// Ohne Option wird er für die übrigen Tests ausgeschaltet.
+export async function createDb({ keepHold = false } = {}) {
   const db = new PGlite({ extensions: { pgcrypto } });
   await db.exec(`
     create role anon nologin;
@@ -16,6 +18,7 @@ export async function createDb() {
   const sql = fs.readFileSync(SCHEMA, 'utf8');
   await db.exec(sql);
   await db.exec(sql); // idempotency: run twice
+  if (!keepHold) await db.exec('update public.site_state set hold_enabled = false, released = false');
   return db;
 }
 

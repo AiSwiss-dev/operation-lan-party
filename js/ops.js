@@ -33,7 +33,7 @@ function renderLocked(message = '') {
   login.addEventListener('click', async () => { if (await commanderLogin()) start(); });
   mount(app, h('section', { class: 'card card--briefing card--narrow' },
     stamp('RESTRICTED'),
-    h('p', { class: 'eyebrow', text: 'NJORGIBICEPS // COMMANDER' }),
+    h('p', { class: 'eyebrow', text: 'OPERATION LAN PARTY // COMMANDER' }),
     h('h1', { class: 'title title--xl', text: 'MISSION OPS' }),
     h('p', { class: 'subtitle', text: 'NUR FÜR DEN COMMANDER' }),
     h('div', { class: 'stripes', 'aria-hidden': 'true' }),
@@ -88,7 +88,7 @@ function start() {
   mount(app,
     h('section', { class: 'card ops-head' },
       stamp('CLASSIFIED'),
-      h('p', { class: 'eyebrow', text: `NJORGIBICEPS // COMMANDER // ${TEXT.eventDate} ${TEXT.eventTime}` }),
+      h('p', { class: 'eyebrow', text: `OPERATION LAN PARTY // COMMANDER // ${TEXT.eventDate} ${TEXT.eventTime}` }),
       h('h1', { class: 'title title--xl', text: 'MISSION OPS' }),
       h('p', { class: 'subtitle', text: 'ATTENDANCE // CHECK-IN // HOLD-SCREEN' }),
       el.tiles),
@@ -148,8 +148,9 @@ function render() {
   if (!st) return;
   const now = st.server_now_ms;
   const accs = st.accounts;
-  const total = accs.length;
-  const onSite = accs.filter((a) => a.checked_in).length;
+  const players = accs.filter((a) => !a.commander);
+  const total = players.length;
+  const onSite = players.filter((a) => a.checked_in).length;
   const online = accs.filter((a) => a.last_seen_ms && now - a.last_seen_ms < ONLINE_MS).length;
   const site = st.site;
   const holdText = !site.hold_enabled ? 'AUS' : site.open ? 'FREIGEGEBEN' : 'AKTIV';
@@ -171,20 +172,22 @@ function render() {
   });
   mount(el.hold,
     h('p', { class: 'lead', text: !site.hold_enabled
-      ? 'Aus: Die Webseite ist für alle offen.'
+      ? 'Aus: Die Webseite ist für alle offen (Login, Quiz, Stats, Bracket).'
       : site.open
         ? 'Freigegeben: Alle waren eingecheckt (oder du hast freigegeben) – die Webseite ist offen.'
-        : `Aktiv: Alle sehen den STANDBY-Bildschirm, bis alle ${total} Operatoren eingecheckt sind (${onSite}/${total}).` }),
-    h('p', { class: 'field__hint', text: 'Gesperrt sind Startseite, Quiz, Game Counter und Bracket. Login, MISSION CONTROL und MISSION OPS bleiben erreichbar. Wer nicht kommt: Account löschen oder manuell freigeben.' }),
+        : `Aktiv: Start-Bildschirm für alle. Niemand kann sich einloggen, dem Quiz beitreten oder Stats eintragen, bis alle ${total} Operatoren eingecheckt sind (${onSite}/${total}).` }),
+    h('p', { class: 'field__hint', text: 'Gesperrt: Startseite, Login, Quiz, Game Counter und Bracket – auch serverseitig. Nur du als Commander (Account havoc) kommst durch. Wer nicht kommt: Account löschen oder MISSION JETZT FREIGEBEN.' }),
     h('div', { class: 'ops-bulk' }, toggle, release));
 
   // Anwesenheitsliste
   el.count.textContent = `${onSite}/${total}`;
   mount(el.list, accs.length ? accs.map((a) => {
     const seen = ago(a.last_seen_ms, now);
-    const check = h('button', { type: 'button', class: `ops-check${a.checked_in ? ' is-in' : ''}`, 'aria-pressed': a.checked_in ? 'true' : 'false' },
-      a.checked_in ? '✓ ON SITE' : 'EINCHECKEN');
-    check.addEventListener('click', () => act((t) => rpc('ops_set_checkin', { p_token: t, p_account_id: a.id, p_checked: !a.checked_in })));
+    const check = a.commander
+      ? h('span', { class: 'ops-check is-cmd' }, 'COMMANDER')
+      : h('button', { type: 'button', class: `ops-check${a.checked_in ? ' is-in' : ''}`, 'aria-pressed': a.checked_in ? 'true' : 'false' },
+          a.checked_in ? '✓ ON SITE' : 'EINCHECKEN');
+    if (!a.commander) check.addEventListener('click', () => act((t) => rpc('ops_set_checkin', { p_token: t, p_account_id: a.id, p_checked: !a.checked_in })));
     const pw = h('button', { type: 'button', class: 'btn btn--tiny' }, 'PASSWORT');
     pw.addEventListener('click', () => resetPassword(a));
     const del = h('button', { type: 'button', class: 'chip__remove', 'aria-label': `${a.username} löschen`, title: 'Account löschen' }, '×');
@@ -205,7 +208,7 @@ function render() {
           a.locked ? h('span', { class: 'ops-badge is-warn', text: 'LOGIN GESPERRT' }) : null)),
       h('span', { class: `ops-row__seen${seen === 'ONLINE' ? ' is-online' : ''}` }, h('span', { class: 'led', 'aria-hidden': 'true' }), seen),
       h('span', { class: 'ops-row__time', text: a.checked_in ? `SEIT ${clock(a.checked_in_at_ms)}` : '' }),
-      h('span', { class: 'ops-row__actions' }, pw, del));
+      h('span', { class: 'ops-row__actions' }, a.commander ? null : pw, a.commander ? null : del));
   }) : h('li', { class: 'muted', text: 'Noch keine Operatoren registriert. Unten Accounts anlegen oder die Spieler registrieren sich selbst unter LOGIN.' }));
 }
 

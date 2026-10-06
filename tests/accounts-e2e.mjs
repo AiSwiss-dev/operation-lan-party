@@ -56,12 +56,13 @@ try {
   await cmd.click('main button:text("COMMANDER LOGIN")');
   await cmd.fill('#cmd-password', PASSWORD);
   await cmd.click('dialog button[type=submit]');
-  await cmd.waitForFunction(() => document.querySelectorAll('.ops-row').length === 2, null, { timeout: 10000 });
-  check(true, 'ops: 2 registered operators listed');
+  await cmd.waitForFunction(() => document.querySelectorAll('.ops-row').length === 3, null, { timeout: 10000 });
+  check(true, 'ops: 2 operators + commander havoc listed');
+  check((await cmd.innerText('.ops-row:has(.ops-row__name:text-is("havoc"))')).includes('COMMANDER'), 'ops: havoc shown as COMMANDER (no check-in button)');
   await cmd.fill('#ops-user', 'AWP_Gott');
   await cmd.fill('#ops-pass', 'awp123');
   await cmd.click('.ops-create button[type=submit]');
-  await cmd.waitForFunction(() => document.querySelectorAll('.ops-row').length === 3, null, { timeout: 10000 });
+  await cmd.waitForFunction(() => document.querySelectorAll('.ops-row').length === 4, null, { timeout: 10000 });
   check(true, 'ops: commander creates account in advance');
 
   // ===== Hold-Screen =====
@@ -80,8 +81,32 @@ try {
   check(await noHScroll(phone), 'hold screen phone: no horizontal scroll');
   await phone.screenshot({ path: `${OUT}/hold-390.png` });
   await p1.goto(B.SITE + 'login.html');
-  await p1.waitForSelector('.profile__name');
-  check((await p1.$$('#hold:not([hidden])')).length === 0, 'login page stays reachable during hold');
+  await p1.waitForSelector('#hold:not([hidden])', { timeout: 10000 });
+  check(true, 'login page is locked during hold too');
+  const outsider = await B.newPage('outsider');
+  await outsider.goto(B.SITE + 'login.html');
+  await outsider.waitForSelector('#hold:not([hidden])', { timeout: 10000 });
+  const blocked = await outsider.evaluate(async () => {
+    const m = await import('./js/supabase-client.js');
+    try { return await m.rpc('account_login', { p_username: 'RushB', p_password: 'rushb!!' }); } catch (e) { return { error: e.code }; }
+  });
+  check(blocked.ok === false && blocked.error === 'SITE_ON_HOLD', 'server rejects player login during hold', blocked);
+  await outsider.context().close();
+  // Commander kommt über den Hold-Screen durch
+  const cmdPhone = await B.newPage('havoc-phone', { width: 390, height: 844 });
+  await cmdPhone.goto(B.SITE);
+  await cmdPhone.waitForSelector('#hold:not([hidden])');
+  await cmdPhone.click('.hold__cmd');
+  await cmdPhone.fill('#hold-pass', PASSWORD);
+  await cmdPhone.click('dialog button[type=submit]');
+  await cmdPhone.waitForSelector('.hub-tile', { state: 'visible', timeout: 10000 });
+  check(await cmdPhone.isHidden('#hold'), 'commander havoc has no hold (normal site)');
+  await cmdPhone.goto(B.SITE + 'counter.html');
+  await cmdPhone.waitForSelector('.cnt-team');
+  await cmdPhone.waitForTimeout(800);
+  check(await cmdPhone.isHidden('#hold'), 'commander: no hold on other pages either');
+  await cmdPhone.screenshot({ path: `${OUT}/hold-commander-390.png` });
+  await cmdPhone.context().close();
 
   const checkIn = async (name) => cmd.click(`.ops-row:has(.ops-row__name:text-is("${name}")) .ops-check`);
   await checkIn('HeadshotHans');
@@ -94,8 +119,8 @@ try {
   await phone.waitForSelector('#hold', { state: 'hidden', timeout: 10000 });
   check(true, 'all checked in → site unlocks live on all devices');
   check((await text(cmd, '.ops-tiles')).includes('3 / 3'), 'ops tile: 3 / 3 on site');
-  await p1.reload();
-  await p1.waitForSelector('.profile__status.is-in');
+  await p1.goto(B.SITE + 'login.html');
+  await p1.waitForSelector('.profile__status.is-in', { timeout: 15000 });
   check(true, 'profile shows EINGECHECKT after commander check-in');
 
   // ===== Quiz mit Login =====
@@ -184,10 +209,10 @@ try {
   console.log('BRACKET');
   await cmd.goto(B.SITE + 'bracket.html');
   await cmd.waitForSelector('.tn-setup:not([hidden])');
-  await cmd.waitForFunction(() => document.querySelectorAll('.tn-acc__chip').length === 3, null, { timeout: 10000 });
+  await cmd.waitForFunction(() => document.querySelectorAll('.tn-acc__chip').length === 4, null, { timeout: 10000 });
   await cmd.click('button:text("EINGECHECKTE ÜBERNEHMEN")');
   const setupNames = await cmd.$$eval('.tn-setup__grid input', (els) => els.map((e) => e.value).filter(Boolean));
-  check(setupNames.sort().join(',') === 'AWP_Gott,HeadshotHans,RushB', 'bracket: takes the 3 checked-in operators', setupNames);
+  check(setupNames.sort().join(',') === 'AWP_Gott,HeadshotHans,RushB,havoc', 'bracket: takes the checked-in operators incl. commander havoc', setupNames);
   await cmd.click('.tn-acc__chip:not([disabled])').catch(() => {});
 
   // ===== Ops: Badges =====

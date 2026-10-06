@@ -289,10 +289,10 @@ function buildPage() {
     h('div', { class: 'stripes br-stripes', 'aria-hidden': 'true' }),
     h('header', { class: 'br-head' },
       h('div', {},
-        h('h1', { class: 'br-title', text: 'OPERATION LAN-PARTY // 1v1' }),
+        h('h1', { class: 'br-title', text: 'OPERATION LAN PARTY // 1v1' }),
         h('p', { class: 'br-sub', text: 'TACTICAL DUEL BRACKET // CS2' })),
       h('div', { class: 'br-meta' },
-        h('p', { text: 'NJORGIBICEPS // SPECIAL OPERATIONS' }),
+        h('p', { text: TEXT.org }),
         el.metaPlayers,
         h('p', { class: 'br-meta--hot', text: 'CLASSIFIED // MATCH CONTROL' }))),
     el.setup,
@@ -303,7 +303,7 @@ function buildPage() {
     h('footer', { class: 'br-params' },
       h('div', {}, h('p', { class: 'br-params__title', text: 'MISSION PARAMETERS' }), el.params),
       h('div', { class: 'tn-params-right' }, el.viewToggle, el.status)),
-    h('div', { class: 'br-foot' }, h('span', { text: 'TACTICAL MATCH CONTROL // ORIGINAL CS2-INSPIRED DESIGN' }), h('span', { text: 'OPERATION LAN-PARTY' })),
+    h('div', { class: 'br-foot' }, h('span', { text: 'TACTICAL MATCH CONTROL // ORIGINAL CS2-INSPIRED DESIGN' }), h('span', { text: 'OPERATION LAN PARTY' })),
     h('div', { class: 'stripes br-stripes', 'aria-hidden': 'true' }));
   mount(app, el.page);
 }
