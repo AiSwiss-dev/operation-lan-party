@@ -108,3 +108,19 @@ export function watchGame(gameId, { onChange, onLive }) {
     supabase.removeChannel(channel);
   };
 }
+
+// Realtime für ganze Tabellen (Game Counter, Bracket)
+export function watchTables(tables, { onChange, onLive }) {
+  if (!supabase) return () => {};
+  let channel = supabase.channel(`olp-${tables.join('-')}-${Math.random().toString(36).slice(2, 8)}`);
+  for (const table of tables) {
+    channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => onChange(table));
+  }
+  channel.subscribe((status) => onLive(status === 'SUBSCRIBED'));
+  let removed = false;
+  return () => {
+    if (removed) return;
+    removed = true;
+    supabase.removeChannel(channel);
+  };
+}

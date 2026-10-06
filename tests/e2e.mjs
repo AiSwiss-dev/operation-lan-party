@@ -175,13 +175,13 @@ try {
   const CODE = (await host.innerText('.mission-code')).replace(/\s/g, '');
   ok(/^\d{6}$/.test(CODE), 'mission code shown ' + CODE);
   const joinText = await host.innerText('.join-url');
-  ok(joinText.endsWith(`/operation-lan-party/?game=${CODE}`), 'join url has subpath', joinText);
+  ok(joinText.endsWith(`/operation-lan-party/quiz.html?game=${CODE}`), 'join url has subpath', joinText);
 
   // QR decode
   const qrPng = PNG.sync.read(await host.locator('.qr').screenshot());
   const decoded = jsQR(new Uint8ClampedArray(qrPng.data), qrPng.width, qrPng.height);
   const JOIN_URL = decoded && decoded.data;
-  ok(JOIN_URL === `${SITE}?game=${CODE}`, 'QR decodes to player url', JOIN_URL);
+  ok(JOIN_URL === `${SITE}quiz.html?game=${CODE}`, 'QR decodes to player url', JOIN_URL);
   await host.screenshot({ path: `${OUT}/host-lobby-empty.png` });
 
   // ===== Players join =====

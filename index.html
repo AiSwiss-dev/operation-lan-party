@@ -8,13 +8,13 @@
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#0f0f0e">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="OPERATION LAN-PARTY – CS2 Einsatzprüfung. Mission beitreten.">
+  <meta name="description" content="OPERATION LAN-PARTY – Quiz, Game Counter und Bracket.">
   <title>Operation LAN-Party</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./css/style.css">
-  <script type="module" src="./js/player.js"></script>
+  <script type="module" src="./js/hub.js"></script>
 </head>
-<body class="page page--player">
+<body class="page page--hub">
   <a class="skip-link" href="#app">Zum Inhalt springen</a>
   <header class="topbar">
     <div class="topbar__brand">
@@ -22,23 +22,53 @@
       <span class="topbar__name">NJORGIBICEPS <span class="topbar__dim">// SPECIAL OPS</span></span>
     </div>
     <div class="topbar__tools">
-      <span id="link-led" class="led-badge" data-state="" title=""><span class="led" aria-hidden="true"></span><span class="led__label"></span></span>
-      <button id="sound-toggle" type="button" class="btn btn--tiny" aria-pressed="true">SOUND ON</button>
+      <span class="topbar__dim topbar__date">14.11.2026 // 14:00</span>
     </div>
   </header>
 
-  <div id="net-banner" class="net-banner" role="alert" hidden>
-    <strong>VERBINDUNG ZUM HQ VERLOREN</strong>
-    <span>RECONNECTING…</span>
-  </div>
-
-  <main id="app" class="main" tabindex="-1">
-    <section class="card card--center">
-      <h1 class="title title--md">LADE BRIEFING…</h1>
-      <noscript><p class="lead">Bitte JavaScript aktivieren, um an der Mission teilzunehmen.</p></noscript>
+  <main id="app" class="main main--hub" tabindex="-1">
+    <section class="card card--briefing hub-head">
+      <span class="stamp" aria-hidden="true">CLASSIFIED</span>
+      <p class="eyebrow">NJORGIBICEPS // SPECIAL OPERATIONS</p>
+      <h1 class="title title--xl">OPERATION<br>LAN-PARTY</h1>
+      <p class="subtitle">WÄHLE DEINE MISSION</p>
+      <div class="stripes" aria-hidden="true"></div>
     </section>
-  </main>
 
-  <p id="sr-status" class="sr-only" role="status" aria-live="polite"></p>
+    <nav class="hub-grid" aria-label="Bereiche">
+      <article class="hub-tile">
+        <a class="hub-tile__main" href="./quiz.html">
+          <span class="hub-tile__num" aria-hidden="true">01</span>
+          <span class="hub-tile__kicker">CS2 EINSATZPRÜFUNG</span>
+          <span class="hub-tile__title">QUIZ</span>
+          <span class="hub-tile__text">20 Fragen, zwei Phasen, Live-Ranking. Mission Code scannen und mitspielen.</span>
+          <span class="hub-tile__cta">MISSION BEITRETEN ▸</span>
+        </a>
+        <a class="hub-tile__sub" href="./host.html">MISSION CONTROL (COMMANDER) ▸</a>
+      </article>
+
+      <article class="hub-tile">
+        <a class="hub-tile__main" href="./counter.html">
+          <span class="hub-tile__num" aria-hidden="true">02</span>
+          <span class="hub-tile__kicker">5-MAN SQUAD // COMPETITIVE</span>
+          <span class="hub-tile__title">GAME COUNTER</span>
+          <span class="hub-tile__text">Siege, Niederlagen und Unentschieden des Teams – mit Map, Score, Serie und Winrate.</span>
+          <span class="hub-tile__cta">BILANZ ÖFFNEN ▸</span>
+        </a>
+      </article>
+
+      <article class="hub-tile">
+        <a class="hub-tile__main" href="./bracket.html">
+          <span class="hub-tile__num" aria-hidden="true">03</span>
+          <span class="hub-tile__kicker">TACTICAL DUEL // 1v1</span>
+          <span class="hub-tile__title">BRACKET</span>
+          <span class="hub-tile__text">5 Operatoren, Single Elimination: Vorrunde, Halbfinale, Finale – wer wird Champion?</span>
+          <span class="hub-tile__cta">BRACKET ÖFFNEN ▸</span>
+        </a>
+      </article>
+    </nav>
+
+    <p class="coords hub-coords" aria-hidden="true">GRID 47°22'N // 008°32'E // OPERATIONS HUB</p>
+  </main>
 </body>
 </html>

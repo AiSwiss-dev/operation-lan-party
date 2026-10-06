@@ -4,10 +4,11 @@
   "type": "module",
   "description": "Automatische Tests für OPERATION LAN-PARTY (nicht für den Betrieb nötig)",
   "scripts": {
-    "sql": "node sql-test.mjs",
+    "sql": "node sql-test.mjs && node extras-sql-test.mjs",
     "e2e": "node e2e.mjs",
+    "extras": "node extras-e2e.mjs",
     "config": "node config-test.mjs",
-    "test": "node sql-test.mjs && node config-test.mjs && node e2e.mjs"
+    "test": "node sql-test.mjs && node extras-sql-test.mjs && node config-test.mjs && node e2e.mjs && node extras-e2e.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",

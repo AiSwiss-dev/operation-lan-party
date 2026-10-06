@@ -2,6 +2,8 @@
 
 Multiplayer-Quiz für die LAN-Party / den Geburtstag von **njorgiBiceps** am **14.11.2026, 14:00 Uhr**.
 
+Die Startseite bietet drei Bereiche: **01 QUIZ**, **02 GAME COUNTER** (Team-Bilanz eures 5er-Teams) und **03 BRACKET** (1v1-Turnier für 5 Operatoren) – siehe [Game Counter & Bracket](#game-counter--bracket).
+
 Der Host (du) zeigt **MISSION CONTROL** auf PC, TV oder Beamer. Die Gäste scannen einen QR-Code, wählen einen Callsign und spielen auf dem Smartphone mit – ohne App, einfach im Browser. 20 Counter-Strike-2-Fragen in zwei Phasen, synchronisierter Countdown, Punkte live, Zwischenranking, Siegerpodium, **TOP OPERATOR**, **MISSION ACCOMPLISHED**.
 
 ---
@@ -75,8 +77,12 @@ Beispiel: 15 Sekunden übrig → 100 + 15 × 5 = **175 Punkte**. Da eine Antwort
 
 | Datei | Zweck |
 |---|---|
-| `index.html` | Spieler-Seite (Smartphone) |
-| `host.html` | MISSION CONTROL (PC/TV/Beamer) |
+| `index.html` | Startseite: Auswahl Quiz / Game Counter / Bracket |
+| `quiz.html` | Quiz – Spieler-Seite (Smartphone) |
+| `host.html` | Quiz – MISSION CONTROL (PC/TV/Beamer) |
+| `counter.html` + `js/counter.js` | Game Counter (Team-Bilanz) |
+| `bracket.html` + `js/bracket.js` | 1v1-Bracket |
+| `js/commander.js` | Commander-Login für Counter und Bracket |
 | `css/style.css` | Komplettes Design (Farben ganz oben) |
 | `js/player.js` | Logik der Spieler-Seite |
 | `js/host.js` | Logik von MISSION CONTROL |
@@ -113,12 +119,12 @@ Du brauchst: einen **GitHub**-Account, einen **Supabase**-Account (beide kostenl
 2. **New query** (bzw. „+“).
 3. Die Datei `supabase/schema.sql` mit einem Texteditor öffnen, **alles** kopieren und in den SQL Editor einfügen.
 4. Unten rechts **Run** klicken.
-5. Ganz unten erscheint eine Ergebniszeile: `fragen = 20`, `phase_1 = 10`, `phase_2 = 10`, `commander_passwort_gesetzt = 0`.
+5. Ganz unten erscheint eine Ergebniszeile: `fragen = 20`, `phase_1 = 10`, `phase_2 = 10`, `commander_passwort_gesetzt = 0`, `counter_bereit = 1`, `bracket_bereit = 1`.
    → Das ist richtig. Das Passwort kommt im nächsten Schritt.
 
 > Das Script darf jederzeit erneut ausgeführt werden (z. B. nach dem Ändern von Fragen). Es löscht keine Spieldaten.
 
-**Kontrolle:** Links auf **Table Editor** → es sollten die Tabellen `games`, `players`, `questions`, `answers`, `player_tokens`, `host_sessions`, `commander_config`, `login_attempts`, `game_rules` sichtbar sein. Bei allen steht „RLS enabled“ (Row Level Security aktiv) – das ist gewollt.
+**Kontrolle:** Links auf **Table Editor** → es sollten die Tabellen `games`, `players`, `questions`, `answers`, `player_tokens`, `host_sessions`, `commander_config`, `login_attempts`, `game_rules` sowie für Counter/Bracket `counter_team`, `counter_matches`, `bracket` sichtbar sein. Bei allen steht „RLS enabled“ (Row Level Security aktiv) – das ist gewollt.
 
 ### Schritt 3 – Commander-Passwort setzen
 
@@ -132,7 +138,7 @@ Antwort: `Commander-Passwort gesetzt. …` – fertig. Das Passwort wird nur ver
 
 ### Schritt 4 – Realtime prüfen
 
-`schema.sql` schaltet Realtime für die Tabellen `games` und `players` automatisch ein. Kontrolle:
+`schema.sql` schaltet Realtime für die Tabellen `games`, `players`, `counter_team`, `counter_matches` und `bracket` automatisch ein. Kontrolle:
 
 * Links **Database** → **Publications** → Zeile `supabase_realtime` → dort müssen `games` und `players` aktiviert sein.
 * Alternativ im **Table Editor** bei `games` bzw. `players`: Schalter/Hinweis „Realtime on“.
@@ -236,8 +242,13 @@ https://DEIN-GITHUB-NAME.github.io/operation-lan-party/
 
 | Wer | Adresse |
 |---|---|
-| Spieler | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/` (oder QR-Code scannen) |
-| Host | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/host.html` |
+| Startseite | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/` |
+| Quiz – Spieler | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/quiz.html` (oder QR-Code scannen) |
+| Quiz – Host | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/host.html` |
+| Game Counter | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/counter.html` |
+| Bracket | `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/bracket.html` |
+
+Alte Links der Form `…/operation-lan-party/?game=CODE` werden automatisch zum Quiz weitergeleitet.
 
 Der QR-Code wird automatisch aus der Adresse von `host.html` berechnet – du musst nirgends deinen GitHub-Namen eintragen. Alle Pfade sind relativ, die App funktioniert deshalb auch im Unterordner `/operation-lan-party/`.
 
@@ -270,11 +281,38 @@ Der aktuell sinnvolle Button leuchtet orange. Buttons, die gerade nicht erlaubt 
 
 ### Spieler
 
-1. QR-Code scannen **oder** `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/` öffnen und den Mission Code eintippen.
+1. QR-Code scannen **oder** `https://DEIN-GITHUB-NAME.github.io/operation-lan-party/` öffnen → **QUIZ** → Mission Code eintippen.
 2. Callsign (2–24 Zeichen) eingeben → **MISSION BEITRETEN**.
 3. Warten bis der Commander startet, dann Antwort antippen → **ANTWORT BESTÄTIGEN**.
 
 Reload, Display-Sperre oder kurzer WLAN-Ausfall sind kein Problem: Die Seite merkt sich den Spieler und landet wieder an der richtigen Stelle. Eine bereits abgegebene Antwort bleibt gesperrt.
+
+### Game Counter & Bracket
+
+Beide Bereiche sind unabhängig vom Quiz, laufen aber über dieselbe Supabase-Datenbank: Alle Geräte sehen Änderungen **live**. **Bearbeiten kann nur der Commander** – mit demselben Passwort wie MISSION CONTROL (oben rechts **COMMANDER LOGIN**; wer auf `host.html` eingeloggt ist, ist hier automatisch eingeloggt). **BEARBEITEN: AN/AUS** blendet die Eingabefelder aus, z. B. für die TV-Ansicht.
+
+**02 GAME COUNTER – Bilanz eures 5er-Teams (CS2 Competitive)**
+
+* Unter **TEAM & OPERATOREN BEARBEITEN** Teamname und die 5 Operatoren eintragen → **TEAM SPEICHERN**.
+* Nach jedem Match: optional Map und Score (Runden, z. B. `13 : 9`) eintragen, dann **+ SIEG**, **+ NIEDERLAGE** oder **+ UNENTSCHIEDEN**. Mit Score wird das Ergebnis automatisch bestimmt (nur der passende Button ist aktiv).
+* Anzeige: WINS / LOSSES / TIES, Winrate, aktuelle Serie, Form der letzten 10 Matches, Bilanz pro Map, Match-Log.
+* Falsch eingetragen? Im Match-Log mit **×** löschen. **BILANZ ZURÜCKSETZEN** löscht alle Matches (Team bleibt).
+
+**03 BRACKET – 1v1, 5 Operatoren, Single Elimination**
+
+| Duel | Runde | Wer |
+|---|---|---|
+| 01 | Vorrunde (PLAY-IN) | zwei ausgeloste Operatoren |
+| 02 | Halbfinale | Freilos + Sieger Duel 01 |
+| 03 | Halbfinale | zwei Operatoren mit Freilos |
+| 04 | Finale | Sieger Duel 02 + Sieger Duel 03 → **CHAMPION / TOP OPERATOR** |
+
+* Die 5 Namen direkt in Duel 01–03 eintragen – oder eintragen und **AUSLOSEN** (zufällige Verteilung).
+* Scores eintragen: der höhere Score gewinnt und rückt automatisch weiter; Gleichstand = noch kein Sieger. Alles wird sofort gespeichert („GESPEICHERT ✓“).
+* **RESULTATE LÖSCHEN** (Namen bleiben) / **ALLES LEEREN**.
+* Auf TV/Beamer (ab ca. 1000 px Breite) erscheint das Bracket wie auf der Vorlage mit Verbindungslinien, auf dem Handy untereinander.
+
+> Neu dazugekommen? Dann `supabase/schema.sql` einmal **erneut komplett** im SQL Editor ausführen – das legt die Tabellen für Counter und Bracket an. Quiz-Daten und Passwort bleiben erhalten.
 
 ---
 
@@ -290,8 +328,10 @@ python -m http.server 8000
 
 Dann im Browser:
 
-* Spieler: <http://localhost:8000/>
-* Host: <http://localhost:8000/host.html>
+* Startseite: <http://localhost:8000/>
+* Quiz – Spieler: <http://localhost:8000/quiz.html>
+* Quiz – Host: <http://localhost:8000/host.html>
+* Game Counter / Bracket: <http://localhost:8000/counter.html>, <http://localhost:8000/bracket.html>
 
 Voraussetzung: `js/config.js` ist angelegt (Schritt 6) und `schema.sql` wurde in Supabase ausgeführt.
 
@@ -467,7 +507,8 @@ Mindestens **ein paar Tage vorher** (kostenlose Supabase-Projekte pausieren nach
 
 ### Getestet
 
-* `schema.sql` mit echtem PostgreSQL (PGlite) als `anon`-Rolle: **153 Prüfungen** – RLS, Rechte, Deadline + Kulanz, Doppelantwort, Punkte (175 bei 15 s, max. 195), Phasenwechsel, Finale, Brute-Force-Sperre, Manipulationsversuche, mehrfaches Ausführen des Scripts.
+* Game Counter + Bracket: **42 Datenbank-Prüfungen** (Rechte, Validierung, Score→Ergebnis, Reset) und **39 Browser-Prüfungen** (Startseite, Commander + Live-Zuschauer, automatisches Weiterrücken, Auslosen, TV-Darstellung 1920×1080 ohne Scrollen).
+* `schema.sql` mit echtem PostgreSQL (PGlite) als `anon`-Rolle: **154 Prüfungen** – RLS, Rechte, Deadline + Kulanz, Doppelantwort, Punkte (175 bei 15 s, max. 195), Phasenwechsel, Finale, Brute-Force-Sperre, Manipulationsversuche, mehrfaches Ausführen des Scripts.
 * Kompletter Ablauf im echten Browser (Chrome headless), App unter dem Unterpfad `/operation-lan-party/` wie bei GitHub Pages, Server-Funktionen aus dem echten `schema.sql`: Host + 10 Spieler, alle 20 Fragen, QR-Code-Dekodierung, doppelter/HTML-Callsign, Reload, zweiter Tab, direkter API-Doppel-Submit, Doppelklicks, spätes Beitreten, Kicken, Verbindungsabbruch + Reconnect, Host-Reload, Zwischenranking, Finale, Tie-Breaker, CSV-Export, Reset; Darstellung bei 320/375/390/430/768 px sowie 1280×720, 1600×900, 1920×1080. **105 Prüfungen mit nachgebildetem Supabase-Realtime** (Event-Laufzeit ~0,2 s) und **100 Prüfungen mit blockiertem Realtime** (reiner Fallback).
 * Fehlerseiten bei fehlender/falscher Konfiguration inkl. Secret-Key-Erkennung.
 * Nicht automatisiert testbar ohne deine Zugangsdaten: das echte Supabase-Projekt und echte iPhone/Android-Geräte → bitte die [Checkliste](#8-test-vor-der-lan-checkliste) durchgehen.

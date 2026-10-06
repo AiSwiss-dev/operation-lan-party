@@ -30,7 +30,7 @@ let fail = 0;
 const expect = { missing: 'KONFIGURATION FEHLT', placeholder: 'KONFIGURATION UNVOLLSTÄNDIG', secret: 'SICHERHEITSALARM', sbsecret: 'SICHERHEITSALARM', badurl: 'SUPABASE-URL UNGÜLTIG' };
 for (const m of Object.keys(expect)) {
   mode = m;
-  for (const page of ['', 'host.html']) {
+  for (const page of ['quiz.html', 'host.html', 'counter.html', 'bracket.html']) {
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
     const errors = [];

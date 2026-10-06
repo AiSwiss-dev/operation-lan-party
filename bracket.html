@@ -8,24 +8,22 @@
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#0f0f0e">
   <meta name="color-scheme" content="dark">
-  <title>Mission Control</title>
+  <title>Bracket – Operation LAN-Party</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./css/style.css">
-  <script type="module" src="./js/host.js"></script>
+  <script type="module" src="./js/bracket.js"></script>
 </head>
-<body class="page page--host">
+<body class="page page--wide page--bracket">
   <a class="skip-link" href="#app">Zum Inhalt springen</a>
-  <header class="topbar topbar--host">
+  <header class="topbar">
     <div class="topbar__brand">
       <a class="topbar__back" href="./" aria-label="Zurück zum Menü">◂ MENÜ</a>
       <span class="topbar__mark" aria-hidden="true">◢◤</span>
-      <span class="topbar__name">MISSION CONTROL <span class="topbar__dim">// NJORGIBICEPS // COMMANDER</span></span>
+      <span class="topbar__name">BRACKET <span class="topbar__dim">// 1v1 TACTICAL DUEL</span></span>
     </div>
     <div class="topbar__tools">
       <span id="link-led" class="led-badge" data-state="" title=""><span class="led" aria-hidden="true"></span><span class="led__label"></span></span>
-      <button id="sound-toggle" type="button" class="btn btn--tiny" aria-pressed="true">SOUND ON</button>
-      <button id="fullscreen-toggle" type="button" class="btn btn--tiny">VOLLBILD</button>
-      <button id="logout" type="button" class="btn btn--tiny" hidden>LOGOUT</button>
+      <span id="cmd-area" class="topbar__cmd"></span>
     </div>
   </header>
 
@@ -34,13 +32,11 @@
     <span>RECONNECTING…</span>
   </div>
 
-  <main id="app" class="main" tabindex="-1">
-    <section class="card card--center card--narrow">
-      <h1 class="title title--md">LADE MISSION CONTROL…</h1>
+  <main id="app" class="main main--wide" tabindex="-1">
+    <section class="card card--center">
+      <h1 class="title title--md">LADE BRACKET…</h1>
       <noscript><p class="lead">Bitte JavaScript aktivieren.</p></noscript>
     </section>
   </main>
-
-  <p id="sr-status" class="sr-only" role="status" aria-live="polite"></p>
 </body>
 </html>

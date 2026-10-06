@@ -8,24 +8,23 @@
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#0f0f0e">
   <meta name="color-scheme" content="dark">
-  <title>Mission Control</title>
+  <meta name="description" content="OPERATION LAN-PARTY – CS2 Einsatzprüfung. Mission beitreten.">
+  <title>Quiz – Operation LAN-Party</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./css/style.css">
-  <script type="module" src="./js/host.js"></script>
+  <script type="module" src="./js/player.js"></script>
 </head>
-<body class="page page--host">
+<body class="page page--player">
   <a class="skip-link" href="#app">Zum Inhalt springen</a>
-  <header class="topbar topbar--host">
+  <header class="topbar">
     <div class="topbar__brand">
       <a class="topbar__back" href="./" aria-label="Zurück zum Menü">◂ MENÜ</a>
       <span class="topbar__mark" aria-hidden="true">◢◤</span>
-      <span class="topbar__name">MISSION CONTROL <span class="topbar__dim">// NJORGIBICEPS // COMMANDER</span></span>
+      <span class="topbar__name">NJORGIBICEPS <span class="topbar__dim">// SPECIAL OPS</span></span>
     </div>
     <div class="topbar__tools">
       <span id="link-led" class="led-badge" data-state="" title=""><span class="led" aria-hidden="true"></span><span class="led__label"></span></span>
       <button id="sound-toggle" type="button" class="btn btn--tiny" aria-pressed="true">SOUND ON</button>
-      <button id="fullscreen-toggle" type="button" class="btn btn--tiny">VOLLBILD</button>
-      <button id="logout" type="button" class="btn btn--tiny" hidden>LOGOUT</button>
     </div>
   </header>
 
@@ -35,9 +34,9 @@
   </div>
 
   <main id="app" class="main" tabindex="-1">
-    <section class="card card--center card--narrow">
-      <h1 class="title title--md">LADE MISSION CONTROL…</h1>
-      <noscript><p class="lead">Bitte JavaScript aktivieren.</p></noscript>
+    <section class="card card--center">
+      <h1 class="title title--md">LADE BRIEFING…</h1>
+      <noscript><p class="lead">Bitte JavaScript aktivieren, um an der Mission teilzunehmen.</p></noscript>
     </section>
   </main>
 

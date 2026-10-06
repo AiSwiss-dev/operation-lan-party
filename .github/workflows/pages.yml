@@ -68,7 +68,7 @@ jobs:
       - name: Webseite zusammenstellen
         run: |
           mkdir -p _site
-          cp -r index.html host.html favicon.svg css js sounds _site/
+          cp -r index.html quiz.html host.html counter.html bracket.html favicon.svg css js sounds _site/
           ls -R _site
 
       - name: GitHub Pages vorbereiten

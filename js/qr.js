@@ -43,8 +43,9 @@ export function createQrSvg(text, { label = 'QR-Code' } = {}) {
 
 // Spieler-URL aus der aktuellen Adresse ableiten – funktioniert unter
 // https://USER.github.io/operation-lan-party/host.html genauso wie lokal.
+// → https://USER.github.io/operation-lan-party/quiz.html?game=CODE
 export function playerUrl(code) {
-  const url = new URL('./', window.location.href);
+  const url = new URL('./quiz.html', window.location.href);
   url.search = '';
   url.hash = '';
   url.searchParams.set('game', code);
