@@ -105,6 +105,13 @@ try {
   await cmdPhone.waitForSelector('.cnt-team');
   await cmdPhone.waitForTimeout(800);
   check(await cmdPhone.isHidden('#hold'), 'commander: no hold on other pages either');
+  await cmdPhone.goto(B.SITE + 'quiz.html');
+  await cmdPhone.waitForSelector('#to-mission-control');
+  check((await cmdPhone.$$('#join-account, #callsign')).length === 0, 'commander on quiz page: MISSION CONTROL instead of joining');
+  await cmdPhone.goto(B.SITE);
+  await cmdPhone.waitForSelector('.hub-tile');
+  check((await cmdPhone.getAttribute('.hub-tile__main >> nth=0', 'href')) === './host.html', 'commander: quiz tile leads to MISSION CONTROL');
+  await cmdPhone.screenshot({ path: `${OUT}/quiz-commander-390.png` });
   await cmdPhone.screenshot({ path: `${OUT}/hold-commander-390.png` });
   await cmdPhone.context().close();
 

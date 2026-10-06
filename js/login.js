@@ -54,7 +54,7 @@ function renderAuth(mode, message = '') {
         ? await rpc('account_login', { p_username: user.value, p_password: pass.value })
         : await rpc('account_register', { p_username: user.value, p_password: pass.value });
       if (!res.ok) { error.textContent = res.error === 'LOGIN_FAILED' ? 'LOGIN FEHLGESCHLAGEN – NAME ODER PASSWORT FALSCH' : errorText(res.error); return; }
-      setAccount(res.token, res.username);
+      setAccount(res.token, res.username, res.commander);
       if (res.host_token) storage.set('olp.host', { token: res.host_token });
       toast(isLogin ? `WILLKOMMEN ZURÜCK, ${res.username}` : `ACCOUNT ${res.username} ERSTELLT`);
       if (returnTo) { window.location.href = `./${returnTo}`; return; }
@@ -133,6 +133,10 @@ function renderProfile(me) {
       returnTo ? h('a', { class: 'btn btn--primary btn--block', href: `./${returnTo}` }, 'WEITER ▸') : null,
       h('div', { class: 'stripes', 'aria-hidden': 'true' })),
 
+    me.commander ? h('section', { class: 'card profile__section' },
+      h('p', { class: 'eyebrow', text: '01 // QUIZ – MISSION CONTROL' }),
+      h('p', { class: 'lead', text: 'Du hast das Quiz erstellt und leitest es – du spielst nicht mit.' }),
+      h('a', { class: 'btn btn--primary btn--block', href: './host.html' }, 'MISSION CONTROL ÖFFNEN ▸')) :
     h('section', { class: 'card profile__section' },
       h('p', { class: 'eyebrow', text: '01 // QUIZ' }),
       h('p', { class: 'lead', text: quizText }),

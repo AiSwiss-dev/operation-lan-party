@@ -69,7 +69,7 @@ function commanderDialog() {
         return;
       }
       if (!res.commander) { error.textContent = 'WÄHREND DES CHECK-INS NUR FÜR DEN COMMANDER'; return; }
-      setAccount(res.token, res.username);
+      setAccount(res.token, res.username, true);
       storage.set('olp.host', { token: res.host_token });
       window.location.reload();
     } catch (e) {

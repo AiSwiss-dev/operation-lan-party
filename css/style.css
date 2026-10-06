@@ -1458,6 +1458,7 @@ body.is-held { overflow: hidden; }
   .led__label { display: none; }
   .topbar__cmd .btn--tiny { padding: 4px 7px; font-size: 10px; letter-spacing: 0.04em; }
   .page--wide .topbar__name, .page--login .topbar__name { display: none; }
+  .topbar__date { display: none; }
 }
 @keyframes hold-out { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 

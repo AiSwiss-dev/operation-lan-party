@@ -14,8 +14,8 @@ export function getAccount() {
   return a && a.token ? a : null;
 }
 
-export function setAccount(token, username) {
-  storage.set(KEY, { token, username });
+export function setAccount(token, username, commander = false) {
+  storage.set(KEY, { token, username, commander: !!commander });
   renderAccountLink();
 }
 
@@ -39,7 +39,7 @@ export async function fetchMe(touch = true) {
   if (!a || !configStatus.ok) return null;
   try {
     const me = await rpc('account_me', { p_token: a.token, p_touch: touch });
-    if (me.username !== a.username) setAccount(a.token, me.username);
+    if (me.username !== a.username || !!me.commander !== !!a.commander) setAccount(a.token, me.username, me.commander);
     return me;
   } catch (e) {
     if (e.code === 'ACCOUNT_UNAUTHORIZED') clearAccount();

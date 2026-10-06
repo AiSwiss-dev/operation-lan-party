@@ -141,6 +141,20 @@ function renderJoin({ code = '', callsign = '', error = '' } = {}) {
   // Mit Login: ohne QR/Code der aktuellen Mission beitreten, Callsign = Benutzername
   const acc = getAccount();
   let accountPanel;
+  if (acc && acc.commander) {
+    mount(app,
+      h('section', { class: 'card card--briefing' },
+        stamp('COMMAND'),
+        h('p', { class: 'eyebrow', text: TEXT.org }),
+        h('h1', { class: 'title title--xl' }, 'MISSION', h('br'), 'CONTROL'),
+        h('p', { class: 'subtitle', text: `COMMANDER ${acc.username}` }),
+        h('div', { class: 'stripes', 'aria-hidden': 'true' }),
+        h('p', { class: 'lead', text: 'Du hast das Quiz erstellt und leitest es über MISSION CONTROL – als Commander spielst du nicht mit.' }),
+        h('a', { class: 'btn btn--primary btn--block btn--xl', href: './host.html', id: 'to-mission-control' }, 'MISSION CONTROL ÖFFNEN ▸'),
+        coordLine('COMMAND POST')));
+    announce('Commander: Mission Control');
+    return;
+  }
   if (acc) {
     const joinAcc = h('button', { type: 'button', class: 'btn btn--primary btn--block btn--xl', id: 'join-account' }, `ALS ${acc.username} BEITRETEN`);
     const accErr = h('p', { class: 'form-error', role: 'alert' });

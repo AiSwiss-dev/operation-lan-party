@@ -1360,6 +1360,11 @@ create or replace function public._players_hold_guard()
 returns trigger language plpgsql set search_path = ''
 as $$
 begin
+  -- Der Commander ist MISSION CONTROL und spielt das Quiz nicht mit;
+  -- sein Name ist als Callsign reserviert.
+  if new.callsign_normalized = public._norm(public._commander_username()) then
+    raise exception 'CALLSIGN_TAKEN';
+  end if;
   if not public._site_open()
      and not exists (select 1 from public.accounts a where a.id = new.account_id and a.is_commander) then
     raise exception 'SITE_ON_HOLD';
@@ -1532,7 +1537,8 @@ declare
   v_ptoken text := public._new_token();
 begin
   a := public._account_auth(p_token);
-  if not a.is_commander and not public._site_open() then raise exception 'SITE_ON_HOLD'; end if;
+  if a.is_commander then raise exception 'COMMANDER_NO_QUIZ'; end if;   -- der Commander ist MISSION CONTROL
+  if not public._site_open() then raise exception 'SITE_ON_HOLD'; end if;
   if v_code <> '' then
     if v_code !~ '^[0-9]{6}$' then raise exception 'MISSION_CODE_INVALID'; end if;
     select * into g from public.games where code = v_code for share;
